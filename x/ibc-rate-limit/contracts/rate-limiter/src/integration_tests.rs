@@ -1,8 +1,8 @@
 #![cfg(test)]
-use crate::{helpers::RateLimitingContract, msg::ExecuteMsg, test_msg_send, ContractError};
-use cosmwasm_std::{Addr, Coin, Empty, Timestamp, Uint128, Uint256};
+use crate::{helpers::RateLimitingContract, msg::{ExecuteMsg, MigrateMsg}, test_msg_send, ContractError};
+use cosmwasm_std::{Addr, Coin, Empty, Timestamp, Uint128, Uint256, testing::{mock_env, mock_dependencies}};
 use cw_multi_test::{App, AppBuilder, Contract, ContractWrapper, Executor};
-
+use crate::contract::migrate;
 use crate::{
     msg::{InstantiateMsg, PathMsg, QuotaMsg},
     state::tests::{RESET_TIME_DAILY, RESET_TIME_MONTHLY, RESET_TIME_WEEKLY},

@@ -1,4 +1,5 @@
 #![cfg(test)]
+use crate::msg::MigrateMsg;
 
 use crate::packet::Packet;
 use crate::{contract::*, test_msg_recv, test_msg_send, ContractError};
@@ -396,4 +397,24 @@ fn test_tokenfactory_message() {
     let json = r#"{"send_packet":{"packet":{"sequence":4,"source_port":"transfer","source_channel":"channel-0","destination_port":"transfer","destination_channel":"channel-1491","data":{"denom":"transfer/channel-0/factory/osmo12smx2wdlyttvyzvzg54y2vnqwq2qjateuf7thj/czar","amount":"100000000000000000","sender":"osmo1cyyzpxplxdzkeea7kwsydadg87357qnahakaks","receiver":"osmo1c584m4lq25h83yp6ag8hh4htjr92d954vklzja"},"timeout_height":{},"timeout_timestamp":1668024476848430980}}}"#;
     let _parsed: SudoMsg = serde_json_wasm::from_str(json).unwrap();
     //println!("{parsed:?}");
+}
+
+
+#[test]
+fn test_migrate_failure_same_version() {
+    let mut deps = mock_dependencies();
+
+    let quota = QuotaMsg::new("weekly", RESET_TIME_WEEKLY, 10, 10);
+    let msg = InstantiateMsg {
+        gov_module: Addr::unchecked(GOV_ADDR),
+        ibc_module: Addr::unchecked(IBC_ADDR),
+        paths: vec![PathMsg {
+            channel_id: format!("any"),
+            denom: format!("denom"),
+            quotas: vec![quota],
+        }],
+    };
+    let info = mock_info(GOV_ADDR, &vec![]);
+    let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+    assert!(migrate(deps.as_mut(), mock_env(), MigrateMsg {  }).is_err());
 }
