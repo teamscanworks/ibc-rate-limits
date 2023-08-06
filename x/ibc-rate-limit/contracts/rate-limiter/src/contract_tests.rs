@@ -3,16 +3,98 @@ use crate::msg::MigrateMsg;
 
 use crate::packet::Packet;
 use crate::{contract::*, test_msg_recv, test_msg_send, ContractError};
-use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-use cosmwasm_std::{from_binary, Addr, Attribute, Uint256};
+use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MockApi, MockStorage};
+use cosmwasm_std::{from_binary, Addr, Attribute, Env, Uint256};
+use cw_multi_test::{App, AppBuilder, BankKeeper, ContractWrapper, Executor};
 
 use crate::helpers::tests::verify_query_response;
 use crate::msg::{InstantiateMsg, PathMsg, QueryMsg, QuotaMsg, SudoMsg};
 use crate::state::tests::RESET_TIME_WEEKLY;
 use crate::state::{RateLimit, GOVMODULE, IBCMODULE, RATE_LIMIT_TRACKERS};
-
 const IBC_ADDR: &str = "IBC_MODULE";
 const GOV_ADDR: &str = "GOV_MODULE";
+
+pub(crate) struct TestEnv {
+    pub app: App,
+    pub contract_addr: Addr,
+    pub env: Env,
+    pub bank: BankKeeper,
+    pub api: Box<MockApi>,
+    pub owner: Addr,
+    pub old_code_id: u64,
+}
+fn new_test_env() -> TestEnv {
+    let owner = Addr::unchecked("owner");
+    let env = mock_env();
+    let api = Box::new(MockApi::default());
+    let bank = BankKeeper::new();
+    let mut app = App::default();
+
+    let code = ContractWrapper::new(execute, instantiate, query)
+        .with_migrate(migrate)
+        .with_sudo(sudo);
+    let code_id = app.store_code(Box::new(code));
+    let addr = app
+        .instantiate_contract(
+            code_id,
+            owner.clone(),
+            &InstantiateMsg {
+                gov_module: Addr::unchecked(GOV_ADDR),
+                ibc_module: Addr::unchecked(IBC_ADDR),
+                paths: vec![],
+            },
+            &[],
+            "Contract",
+            Some(owner.into_string()),
+        )
+        .unwrap();
+    TestEnv {
+        app,
+        contract_addr: addr,
+        env,
+        bank,
+        api,
+        owner: Addr::unchecked("owner"),
+        old_code_id: code_id,
+    }
+}
+
+// performs a very basic migration test, ensuring that standard migration logic works
+#[test]
+fn test_basic_migration() {
+    let mut env = new_test_env();
+    let res = env
+        .app
+        .migrate_contract(
+            env.owner.clone(),
+            env.contract_addr.clone(),
+            &MigrateMsg {},
+            env.old_code_id,
+        )
+        .unwrap();
+    for evt in res.events {
+        if evt.ty.starts_with("wasm") {
+            for evt_attrib in evt.attributes {
+                if evt_attrib.key == "old_version" {
+                    assert!(evt_attrib.value == "0.0.1")
+                }
+                if evt_attrib.key == "new_version" {
+                    assert!(evt_attrib.value == "0.0.2");
+                }
+            }
+        }
+    }
+    // trigger another migration, which should result in an error
+    assert!(env
+        .app
+        .migrate_contract(
+            env.owner,
+            env.contract_addr,
+            &MigrateMsg {},
+            env.old_code_id,
+        ).is_err());
+}
+
 
 #[test] // Tests we ccan instantiate the contract and that the owners are set correctly
 fn proper_instantiation() {
@@ -397,24 +479,4 @@ fn test_tokenfactory_message() {
     let json = r#"{"send_packet":{"packet":{"sequence":4,"source_port":"transfer","source_channel":"channel-0","destination_port":"transfer","destination_channel":"channel-1491","data":{"denom":"transfer/channel-0/factory/osmo12smx2wdlyttvyzvzg54y2vnqwq2qjateuf7thj/czar","amount":"100000000000000000","sender":"osmo1cyyzpxplxdzkeea7kwsydadg87357qnahakaks","receiver":"osmo1c584m4lq25h83yp6ag8hh4htjr92d954vklzja"},"timeout_height":{},"timeout_timestamp":1668024476848430980}}}"#;
     let _parsed: SudoMsg = serde_json_wasm::from_str(json).unwrap();
     //println!("{parsed:?}");
-}
-
-
-#[test]
-fn test_migrate_failure_same_version() {
-    let mut deps = mock_dependencies();
-
-    let quota = QuotaMsg::new("weekly", RESET_TIME_WEEKLY, 10, 10);
-    let msg = InstantiateMsg {
-        gov_module: Addr::unchecked(GOV_ADDR),
-        ibc_module: Addr::unchecked(IBC_ADDR),
-        paths: vec![PathMsg {
-            channel_id: format!("any"),
-            denom: format!("denom"),
-            quotas: vec![quota],
-        }],
-    };
-    let info = mock_info(GOV_ADDR, &vec![]);
-    let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-    assert!(migrate(deps.as_mut(), mock_env(), MigrateMsg {  }).is_err());
 }

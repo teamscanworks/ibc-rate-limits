@@ -14,7 +14,9 @@ mod query;
 mod sudo;
 
 // Tests
-mod contract_tests;
+#[cfg(test)]
+pub mod contract_tests;
+
 mod helpers;
 mod integration_tests;
 
