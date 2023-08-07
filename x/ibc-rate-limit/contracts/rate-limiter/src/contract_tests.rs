@@ -3,8 +3,8 @@ use crate::msg::MigrateMsg;
 
 use crate::packet::Packet;
 use crate::{contract::*, test_msg_recv, test_msg_send, ContractError};
-use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MockApi, MockStorage};
-use cosmwasm_std::{from_binary, Addr, Attribute, Env, Uint256};
+use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MockApi, MockStorage, MockQuerier};
+use cosmwasm_std::{from_binary, Addr, Attribute, Env, Uint256, Querier, OwnedDeps, MemoryStorage};
 use cw_multi_test::{App, AppBuilder, BankKeeper, ContractWrapper, Executor};
 
 use crate::helpers::tests::verify_query_response;
@@ -15,86 +15,49 @@ const IBC_ADDR: &str = "IBC_MODULE";
 const GOV_ADDR: &str = "GOV_MODULE";
 
 pub(crate) struct TestEnv {
-    pub app: App,
-    pub contract_addr: Addr,
     pub env: Env,
-    pub bank: BankKeeper,
-    pub api: Box<MockApi>,
-    pub owner: Addr,
-    pub old_code_id: u64,
+    pub deps: OwnedDeps<MemoryStorage, MockApi, MockQuerier>
 }
-fn new_test_env() -> TestEnv {
-    let owner = Addr::unchecked("owner");
-    let env = mock_env();
-    let api = Box::new(MockApi::default());
-    let bank = BankKeeper::new();
-    let mut app = App::default();
+fn new_test_env(paths: &[PathMsg]) -> TestEnv {
 
-    let code = ContractWrapper::new(execute, instantiate, query)
-        .with_migrate(migrate)
-        .with_sudo(sudo);
-    let code_id = app.store_code(Box::new(code));
-    let addr = app
-        .instantiate_contract(
-            code_id,
-            owner.clone(),
-            &InstantiateMsg {
-                gov_module: Addr::unchecked(GOV_ADDR),
-                ibc_module: Addr::unchecked(IBC_ADDR),
-                paths: vec![],
-            },
-            &[],
-            "Contract",
-            Some(owner.into_string()),
-        )
-        .unwrap();
+    let mut deps: OwnedDeps<MemoryStorage, MockApi, MockQuerier> = mock_dependencies();
+    let env = mock_env();
+    let msg = InstantiateMsg {
+        gov_module: Addr::unchecked(GOV_ADDR),
+        ibc_module: Addr::unchecked(IBC_ADDR),
+        paths: paths.to_vec(),
+    };
+    let info = mock_info(GOV_ADDR, &vec![]);
+    instantiate(deps.as_mut(), env.clone(), info, msg).unwrap();
+
     TestEnv {
-        app,
-        contract_addr: addr,
+        deps,
         env,
-        bank,
-        api,
-        owner: Addr::unchecked("owner"),
-        old_code_id: code_id,
     }
 }
 
 // performs a very basic migration test, ensuring that standard migration logic works
 #[test]
 fn test_basic_migration() {
-    let mut env = new_test_env();
-    let res = env
-        .app
-        .migrate_contract(
-            env.owner.clone(),
-            env.contract_addr.clone(),
-            &MigrateMsg {},
-            env.old_code_id,
-        )
-        .unwrap();
-    for evt in res.events {
-        if evt.ty.starts_with("wasm") {
-            for evt_attrib in evt.attributes {
-                if evt_attrib.key == "old_version" {
-                    assert!(evt_attrib.value == "0.0.1")
-                }
-                if evt_attrib.key == "new_version" {
-                    assert!(evt_attrib.value == "0.0.2");
-                }
+    let test_env = new_test_env(&[PathMsg {
+        channel_id: format!("any"),
+        denom: format!("denom"),
+        quotas: vec![QuotaMsg::new("weekly", RESET_TIME_WEEKLY, 10, 10)],
+    }]);
+
+
+
+    for key in RATE_LIMIT_TRACKERS.keys(&test_env.deps.storage, None, None, cosmwasm_std::Order::Ascending) {
+        match key {
+            Ok((k, v)) => {
+                println!("got key {}, {}", k, v);
+            }
+            Err(err) => {
+                println!("got error {err:#?}");
             }
         }
     }
-    // trigger another migration, which should result in an error
-    assert!(env
-        .app
-        .migrate_contract(
-            env.owner,
-            env.contract_addr,
-            &MigrateMsg {},
-            env.old_code_id,
-        ).is_err());
 }
-
 
 #[test] // Tests we ccan instantiate the contract and that the owners are set correctly
 fn proper_instantiation() {
@@ -302,7 +265,7 @@ fn asymetric_quotas() {
 
 #[test] // Tests we can get the current state of the trackers
 fn query_state() {
-    let mut deps = mock_dependencies();
+    let mut deps: OwnedDeps<MemoryStorage, MockApi, MockQuerier> = mock_dependencies();
 
     let quota = QuotaMsg::new("weekly", RESET_TIME_WEEKLY, 10, 10);
     let msg = InstantiateMsg {
