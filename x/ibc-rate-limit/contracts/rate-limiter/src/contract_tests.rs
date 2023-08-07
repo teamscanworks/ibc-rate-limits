@@ -10,7 +10,7 @@ use cw_multi_test::{App, AppBuilder, BankKeeper, ContractWrapper, Executor};
 use crate::helpers::tests::verify_query_response;
 use crate::msg::{InstantiateMsg, PathMsg, QueryMsg, QuotaMsg, SudoMsg};
 use crate::state::tests::RESET_TIME_WEEKLY;
-use crate::state::{RateLimit, GOVMODULE, IBCMODULE, RATE_LIMIT_TRACKERS};
+use crate::state::{RateLimit, GOVMODULE, IBCMODULE, RATE_LIMIT_TRACKERS, RateLimitType, QuotaType};
 const IBC_ADDR: &str = "IBC_MODULE";
 const GOV_ADDR: &str = "GOV_MODULE";
 
@@ -286,17 +286,27 @@ fn query_state() {
     };
 
     let res = query(deps.as_ref(), mock_env(), query_msg.clone()).unwrap();
-    let value: Vec<RateLimit> = from_binary(&res).unwrap();
-    assert_eq!(value[0].quota.name, "weekly");
-    assert_eq!(value[0].quota.max_percentage_send, 10);
-    assert_eq!(value[0].quota.max_percentage_recv, 10);
-    assert_eq!(value[0].quota.duration, RESET_TIME_WEEKLY);
-    assert_eq!(value[0].flow.inflow, Uint256::from(0_u32));
-    assert_eq!(value[0].flow.outflow, Uint256::from(0_u32));
-    assert_eq!(
-        value[0].flow.period_end,
-        env.block.time.plus_seconds(RESET_TIME_WEEKLY)
-    );
+    let value: Vec<RateLimitType> = from_binary(&res).unwrap();
+    let first = value.first().unwrap();
+    let flow = first.flow();
+    let quota = first.quota_type();
+    let quota = if let QuotaType::V2(quota) = quota {
+        quota
+    } else {
+        panic!("should be QuotaV2");
+    };
+    assert_eq!(quota.name, "weekly");
+    assert_eq!(quota.max_percentage_send, 10);
+    assert_eq!(quota.max_percentage_recv, 10);
+    // duration not applicable for QuotaV2
+    //assert_eq!(value[0].quota.duration, RESET_TIME_WEEKLY);
+    assert_eq!(flow.inflow, Uint256::from(0_u32));
+    assert_eq!(flow.outflow, Uint256::from(0_u32));
+    // not applicable when using RateLimitType::V2
+    //assert_eq!(
+    //    value[0].flow.period_end,
+    //    env.block.time.plus_seconds(RESET_TIME_WEEKLY)
+    //);
 
     let send_msg = test_msg_send!(
         channel_id: format!("channel"),
@@ -316,7 +326,7 @@ fn query_state() {
 
     // Query
     let res = query(deps.as_ref(), mock_env(), query_msg.clone()).unwrap();
-    let value: Vec<RateLimit> = from_binary(&res).unwrap();
+    let value: Vec<RateLimitType> = from_binary(&res).unwrap();
     verify_query_response(
         &value[0],
         "weekly",
@@ -356,7 +366,7 @@ fn bad_quotas() {
         denom: format!("denom"),
     };
     let res = query(deps.as_ref(), env.clone(), query_msg).unwrap();
-    let value: Vec<RateLimit> = from_binary(&res).unwrap();
+    let value: Vec<RateLimitType> = from_binary(&res).unwrap();
     verify_query_response(
         &value[0],
         "bad_quota",
@@ -406,20 +416,20 @@ fn undo_send() {
         .load(&deps.storage, ("any".to_string(), "denom".to_string()))
         .unwrap();
     assert_eq!(
-        trackers.first().unwrap().flow.outflow,
+        trackers.first().unwrap().flow().outflow,
         Uint256::from(300_u32)
     );
-    let period_end = trackers.first().unwrap().flow.period_end;
-    let channel_value = trackers.first().unwrap().quota.channel_value;
+    let period_end = trackers.first().unwrap().flow().period_end;
+    let channel_value = trackers.first().unwrap().channel_value();
 
     sudo(deps.as_mut(), mock_env(), undo_msg.clone()).unwrap();
 
     let trackers = RATE_LIMIT_TRACKERS
         .load(&deps.storage, ("any".to_string(), "denom".to_string()))
         .unwrap();
-    assert_eq!(trackers.first().unwrap().flow.outflow, Uint256::from(0_u32));
-    assert_eq!(trackers.first().unwrap().flow.period_end, period_end);
-    assert_eq!(trackers.first().unwrap().quota.channel_value, channel_value);
+    assert_eq!(trackers.first().unwrap().flow().outflow, Uint256::from(0_u32));
+    assert_eq!(trackers.first().unwrap().flow().period_end, period_end);
+    assert_eq!(trackers.first().unwrap().channel_value(), channel_value);
 }
 
 #[test]

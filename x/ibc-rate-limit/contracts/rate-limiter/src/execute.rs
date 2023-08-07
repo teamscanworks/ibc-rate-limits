@@ -116,7 +116,7 @@ mod tests {
     use crate::contract::{execute, query};
     use crate::helpers::tests::verify_query_response;
     use crate::msg::{ExecuteMsg, QueryMsg, QuotaMsg};
-    use crate::state::{RateLimit, GOVMODULE, IBCMODULE};
+    use crate::state::{RateLimit, GOVMODULE, IBCMODULE, RateLimitType};
 
     const IBC_ADDR: &str = "IBC_MODULE";
     const GOV_ADDR: &str = "GOV_MODULE";
@@ -153,7 +153,7 @@ mod tests {
 
         let res = query(deps.as_ref(), mock_env(), query_msg.clone()).unwrap();
 
-        let value: Vec<RateLimit> = from_binary(&res).unwrap();
+        let value: Vec<RateLimitType> = from_binary(&res).unwrap();
         verify_query_response(
             &value[0],
             "daily",
@@ -201,7 +201,7 @@ mod tests {
             denom: format!("denom"),
         };
         let res = query(deps.as_ref(), mock_env(), query_msg.clone()).unwrap();
-        let value: Vec<RateLimit> = from_binary(&res).unwrap();
+        let value: Vec<RateLimitType> = from_binary(&res).unwrap();
         assert_eq!(value.len(), 1);
         verify_query_response(
             &value[0],
@@ -233,7 +233,7 @@ mod tests {
             denom: format!("denom"),
         };
         let res = query(deps.as_ref(), mock_env(), query_msg.clone()).unwrap();
-        let value: Vec<RateLimit> = from_binary(&res).unwrap();
+        let value: Vec<RateLimitType> = from_binary(&res).unwrap();
         assert_eq!(value.len(), 1);
 
         verify_query_response(

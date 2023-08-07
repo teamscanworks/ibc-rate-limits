@@ -39,10 +39,10 @@ impl RateLimitingContract {
 pub mod tests {
     use cosmwasm_std::{Timestamp, Uint256};
 
-    use crate::state::RateLimit;
+    use crate::state::{RateLimit, RateLimitType};
 
     pub fn verify_query_response(
-        value: &RateLimit,
+        value: &RateLimitType,
         quota_name: &str,
         send_recv: (u32, u32),
         duration: u64,
@@ -50,12 +50,14 @@ pub mod tests {
         outflow: Uint256,
         period_end: Timestamp,
     ) {
-        assert_eq!(value.quota.name, quota_name);
-        assert_eq!(value.quota.max_percentage_send, send_recv.0);
-        assert_eq!(value.quota.max_percentage_recv, send_recv.1);
-        assert_eq!(value.quota.duration, duration);
-        assert_eq!(value.flow.inflow, inflow);
-        assert_eq!(value.flow.outflow, outflow);
-        assert_eq!(value.flow.period_end, period_end);
+        let quota = value.quota_type();
+        let flow = value.flow();
+        assert_eq!(quota.name(), quota_name);
+        assert_eq!(quota.max_percentage_send(), send_recv.0);
+        assert_eq!(quota.max_percentage_recv(), send_recv.1);
+        assert_eq!(quota.duration(), duration);
+        assert_eq!(flow.inflow, inflow);
+        assert_eq!(flow.outflow, outflow);
+        assert_eq!(flow.period_end, period_end);
     }
 }

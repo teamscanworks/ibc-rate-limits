@@ -41,6 +41,7 @@ pub struct QuotaMsg {
 // QuotaMsg represents a rate limiting Quota when sent as a wasm msg
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct QuotaMsgV2 {
+    pub name: String,
     pub send_recv: (u32, u32),
 }
 
@@ -57,8 +58,9 @@ impl QuotaMsg {
 
 
 impl QuotaMsgV2 {
-    pub fn new(send_percentage: u32, recv_percentage: u32) -> Self {
+    pub fn new(name: &str, send_percentage: u32, recv_percentage: u32) -> Self {
         QuotaMsgV2 {
+            name: name.to_string(),
             send_recv: (send_percentage, recv_percentage),
         }
     }
