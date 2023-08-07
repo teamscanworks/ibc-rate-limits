@@ -38,6 +38,13 @@ pub struct QuotaMsg {
     pub send_recv: (u32, u32),
 }
 
+// QuotaMsg represents a rate limiting Quota when sent as a wasm msg
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+pub struct QuotaMsgV2 {
+    pub send_recv: (u32, u32),
+}
+
+
 impl QuotaMsg {
     pub fn new(name: &str, seconds: u64, send_percentage: u32, recv_percentage: u32) -> Self {
         QuotaMsg {
@@ -48,6 +55,14 @@ impl QuotaMsg {
     }
 }
 
+
+impl QuotaMsgV2 {
+    pub fn new(send_percentage: u32, recv_percentage: u32) -> Self {
+        QuotaMsgV2 {
+            send_recv: (send_percentage, recv_percentage),
+        }
+    }
+}
 /// Initialize the contract with the address of the IBC module and any existing channels.
 /// Only the ibc module is allowed to execute actions on this contract
 #[cw_serde]

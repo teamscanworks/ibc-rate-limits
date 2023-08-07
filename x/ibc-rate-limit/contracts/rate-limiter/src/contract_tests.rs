@@ -39,24 +39,23 @@ fn new_test_env(paths: &[PathMsg]) -> TestEnv {
 // performs a very basic migration test, ensuring that standard migration logic works
 #[test]
 fn test_basic_migration() {
-    let test_env = new_test_env(&[PathMsg {
+    let mut test_env = new_test_env(&[PathMsg {
         channel_id: format!("any"),
         denom: format!("denom"),
         quotas: vec![QuotaMsg::new("weekly", RESET_TIME_WEEKLY, 10, 10)],
     }]);
 
+    let msg = test_msg_send!(
+        channel_id: format!("channel"),
+        denom: format!("denom") ,
+        channel_value: 3_300_u32.into(),
+        funds: 300_u32.into()
+    );
+    let res = sudo(test_env.deps.as_mut(), test_env.env.clone(), msg).unwrap();
+    println!("{res:#?}");
 
-
-    for key in RATE_LIMIT_TRACKERS.keys(&test_env.deps.storage, None, None, cosmwasm_std::Order::Ascending) {
-        match key {
-            Ok((k, v)) => {
-                println!("got key {}, {}", k, v);
-            }
-            Err(err) => {
-                println!("got error {err:#?}");
-            }
-        }
-    }
+    let res = migrate(test_env.deps.as_mut(), test_env.env.clone(), MigrateMsg {  }).unwrap();
+    println!("{res:#?}");
 }
 
 #[test] // Tests we ccan instantiate the contract and that the owners are set correctly

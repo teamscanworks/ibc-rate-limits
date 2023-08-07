@@ -159,6 +159,17 @@ impl Flow {
         self.add_flow(direction.clone(), funds);
         expired
     }
+    /// Applies a transfer. flows are not reset in v2 as that happens
+    /// using beforeBlock
+    fn apply_transfer_v2(
+        &mut self,
+        direction: &FlowType,
+        funds: Uint256,
+        now: Timestamp,
+        quota: &QuotaV2,
+    ) {
+        self.add_flow(direction.clone(), funds);
+    }
 }
 
 /// A Quota is the percentage of the denom's total value that can be transferred
@@ -176,8 +187,44 @@ pub struct Quota {
     pub duration: u64,
     pub channel_value: Option<Uint256>,
 }
+/// A Quota is the percentage of the denom's total value that can be transferred
+/// through the channel in a given period of time (duration)
+///
+/// Percentages can be different for send and recv
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+pub struct QuotaV2 {
+    pub max_percentage_send: u32,
+    pub max_percentage_recv: u32,
+    pub channel_value: Option<Uint256>,
+}
 
 impl Quota {
+    /// Calculates the max capacity (absolute value in the same unit as
+    /// total_value) in each direction based on the total value of the denom in
+    /// the channel. The result tuple represents the max capacity when the
+    /// transfer is in directions: (FlowType::In, FlowType::Out)
+    pub fn capacity(&self) -> (Uint256, Uint256) {
+        match self.channel_value {
+            Some(total_value) => (
+                total_value * Uint256::from(self.max_percentage_recv) / Uint256::from(100_u32),
+                total_value * Uint256::from(self.max_percentage_send) / Uint256::from(100_u32),
+            ),
+            None => (0_u32.into(), 0_u32.into()), // This should never happen, but ig the channel value is not set, we disallow any transfer
+        }
+    }
+
+    /// returns the capacity in a direction. This is used for displaying cleaner errors
+    pub fn capacity_on(&self, direction: &FlowType) -> Uint256 {
+        let (max_in, max_out) = self.capacity();
+        match direction {
+            FlowType::In => max_in,
+            FlowType::Out => max_out,
+        }
+    }
+}
+
+
+impl QuotaV2 {
     /// Calculates the max capacity (absolute value in the same unit as
     /// total_value) in each direction based on the total value of the denom in
     /// the channel. The result tuple represents the max capacity when the
@@ -217,6 +264,19 @@ impl From<&QuotaMsg> for Quota {
         }
     }
 }
+impl From<&QuotaMsg> for QuotaV2 {
+    fn from(msg: &QuotaMsg) -> Self {
+        let send_recv = (
+            cmp::min(msg.send_recv.0, 100),
+            cmp::min(msg.send_recv.1, 100),
+        );
+        QuotaV2 {
+            max_percentage_send: send_recv.0,
+            max_percentage_recv: send_recv.1,
+            channel_value: None,
+        }
+    }
+}
 
 /// RateLimit is the main structure tracked for each channel/denom pair. Its quota
 /// represents rate limit configuration, and the flow its
@@ -224,6 +284,14 @@ impl From<&QuotaMsg> for Quota {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct RateLimit {
     pub quota: Quota,
+    pub flow: Flow,
+}
+/// RateLimit is the main structure tracked for each channel/denom pair. Its quota
+/// represents rate limit configuration, and the flow its
+/// current state (i.e.: how much value has been transfered in the current period)
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+pub struct RateLimitV2 {
+    pub quota: QuotaV2,
     pub flow: Flow,
 }
 
@@ -305,6 +373,59 @@ impl RateLimit {
     }
 }
 
+impl RateLimitV2 {
+    /// Checks if a transfer is allowed and updates the data structures
+    /// accordingly.
+    ///
+    /// If the transfer is not allowed, it will return a RateLimitExceeded error.
+    ///
+    /// Otherwise it will return a RateLimitResponse with the updated data structures
+    pub fn allow_transfer(
+        &mut self,
+        path: &Path,
+        direction: &FlowType,
+        funds: Uint256,
+        channel_value: Uint256,
+        now: Timestamp,
+    ) -> Result<Self, ContractError> {
+        // Flow used before this transaction is applied.
+        // This is used to make error messages more informative
+        let initial_flow = self.flow.balance_on(direction);
+
+        // Apply the transfer. From here on, we will updated the flow with the new transfer
+        // and check if  it exceeds the quota at the current time
+
+        self.flow.apply_transfer_v2(direction, funds, now, &self.quota);
+        // Cache the channel value if it has never been set or it has expired.
+        if self.quota.channel_value.is_none() {
+            self.quota.channel_value = Some(calculate_channel_value(
+                channel_value,
+                &path.denom,
+                funds,
+                direction,
+            ))
+        }
+
+        let (max_in, max_out) = self.quota.capacity();
+        // Return the effects of applying the transfer or an error.
+        match self.flow.exceeds(direction, max_in, max_out) {
+            true => Err(ContractError::RateLimitExceded {
+                channel: path.channel.to_string(),
+                denom: path.denom.to_string(),
+                amount: funds,
+                quota_name: String::default(),
+                used: initial_flow,
+                max: self.quota.capacity_on(direction),
+                reset: self.flow.period_end,
+            }),
+            false => Ok(RateLimitV2 {
+                quota: self.quota.clone(), // Cloning here because self.quota.name (String) does not allow us to implement Copy
+                flow: self.flow, // We can Copy flow, so this is slightly more efficient than cloning the whole RateLimit
+            }),
+        }
+    }
+}
+
 /// Only this address can manage the contract. This will likely be the
 /// governance module, but could be set to something else if needed
 pub const GOVMODULE: Item<Addr> = Item::new("gov_module");
@@ -331,6 +452,8 @@ pub const IBCMODULE: Item<Addr> = Item::new("ibc_module");
 /// composite keys instead of a struct to avoid having to implement the
 /// PrimaryKey trait
 pub const RATE_LIMIT_TRACKERS: Map<(String, String), Vec<RateLimit>> = Map::new("flow");
+
+pub const RATE_LIMIT_TRACKERS_V2: Map<(String, String), Vec<RateLimitV2>> = Map::new("flow_v2");
 
 #[cfg(test)]
 pub mod tests {
