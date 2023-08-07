@@ -6,6 +6,7 @@ mod error;
 pub mod msg;
 mod state;
 
+mod migrations;
 pub mod packet;
 
 // Functions

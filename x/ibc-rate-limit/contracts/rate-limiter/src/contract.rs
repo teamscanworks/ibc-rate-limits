@@ -9,9 +9,9 @@ use crate::state::{FlowType, GOVMODULE, IBCMODULE};
 use crate::{execute, query, sudo};
 
 // version info for migration info
-const CONTRACT_NAME: &str = "crates.io:rate-limiter";
+pub(crate) const CONTRACT_NAME: &str = "crates.io:rate-limiter";
 
-const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -20,9 +20,9 @@ pub fn instantiate(
     _info: MessageInfo,
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
-    // set to lowest possible version number for testing
+    // for testing purposes always set version to 0.1.0
     #[cfg(test)]
-    set_contract_version(deps.storage, CONTRACT_NAME, "0.0.1")?;
+    set_contract_version(deps.storage, CONTRACT_NAME, "0.1.0")?;
 
     #[cfg(not(test))]
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
@@ -108,38 +108,6 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
-    let c_version = get_contract_version(deps.storage)?;
-    if &c_version.contract != CONTRACT_NAME {
-        return Err(StdError::generic_err("Can only upgrade from same type").into());
-    }
-    let stored_version: semver::Version = c_version.version.parse()?;
-
-    // logic that should only run in testing (handle valid migration)
-    #[cfg(test)]
-    let code_version =
-        if stored_version.major == 0 && stored_version.minor == 0 && stored_version.patch == 1 {
-            let code_version: semver::Version = "0.0.2".parse()?;
-            code_version
-        } else {
-            let code_version: semver::Version = "0.0.2".parse()?;
-            code_version
-        };
-
-    // when not testing, derive code version from the global variable
-    #[cfg(not(test))]
-    let code_version: semver::Version = CONTRACT_VERSION.parse()?;
-
-    if stored_version < code_version {
-        // update contract version
-        set_contract_version(deps.storage, CONTRACT_NAME, code_version.to_string())?;
-        // handle storage migrations
-        Ok(Response::default().add_event(
-            Event::new("migration_ok")
-            .add_attribute("old_version", stored_version.to_string())
-            .add_attribute("new_version", code_version.to_string()),
-        ))
-    } else {
-        return Err(StdError::generic_err("Can't upgrade from a newer version").into());
-    }
+pub fn migrate(deps: DepsMut, env: Env, msg: MigrateMsg) -> Result<Response, ContractError> {
+    crate::migrations::migrate_internal(deps, env, msg)
 }
