@@ -160,15 +160,29 @@ impl Flow {
         expired
     }
     /// Applies a transfer. flows are not reset in v2 as that happens
-    /// using beforeBlock
+    /// using beforeBlock, however in v1 returning true means flows reset
     fn apply_transfer_v2(
         &mut self,
         direction: &FlowType,
         funds: Uint256,
         now: Timestamp,
-        quota: &QuotaV2,
-    ) {
-        self.add_flow(direction.clone(), funds);
+        quota: &QuotaType,
+    ) -> bool {
+        match quota {
+            QuotaType::V1(quota) => {
+                let mut expired = false;
+                if self.is_expired(now) {
+                    self.expire(now, quota.duration);
+                    expired = true;
+                }
+                self.add_flow(direction.clone(), funds);
+                expired
+            }
+            QuotaType::V2(quota) => {
+                self.add_flow(direction.clone(), funds);
+                false
+            }
+        }
     }
 }
 
@@ -197,7 +211,39 @@ pub struct QuotaV2 {
     pub max_percentage_recv: u32,
     pub channel_value: Option<Uint256>,
 }
-
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+pub enum QuotaType {
+    V1(Quota),
+    V2(QuotaV2),
+}
+impl QuotaType {
+    pub fn name(&self) -> String {
+        if let Self::V1(quota) = self {
+            quota.name.clone()
+        } else {
+            // name is used for specifying time period, however v2 doesnt use that
+            String::default()
+        }
+    }
+    pub fn capacity(&self) -> (Uint256, Uint256) {
+        match self {
+            QuotaType::V1(quota) => quota.capacity(),
+            QuotaType::V2(quota) => quota.capacity(),
+        }
+    }
+    pub fn capacity_on(&self, direction: &FlowType) -> Uint256 {
+        match self {
+            QuotaType::V1(quota) => quota.capacity_on(direction),
+            QuotaType::V2(quota) => quota.capacity_on(direction),
+        }
+    }
+    pub fn duration(self) -> u64 {
+        match self {
+            Self::V1(quota) => quota.duration,
+            Self::V2(quota) => 0,
+        }
+    }
+}
 impl Quota {
     /// Calculates the max capacity (absolute value in the same unit as
     /// total_value) in each direction based on the total value of the denom in
@@ -222,7 +268,6 @@ impl Quota {
         }
     }
 }
-
 
 impl QuotaV2 {
     /// Calculates the max capacity (absolute value in the same unit as
@@ -278,6 +323,24 @@ impl From<&QuotaMsg> for QuotaV2 {
     }
 }
 
+impl From<RateLimit> for RateLimitType {
+    fn from(value: RateLimit) -> Self {
+        Self::V1 { quota: QuotaType::V1(value.quota), flow: value.flow }
+    }
+}
+
+impl From<RateLimitV2> for RateLimitType {
+    fn from(value: RateLimitV2) -> Self {
+        Self::V2 { quota: QuotaType::V2(value.quota), flow: value.flow}
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+pub enum RateLimitType {
+    V1 { quota: QuotaType, flow: Flow },
+    V2 { quota: QuotaType, flow: Flow },
+}
+
 /// RateLimit is the main structure tracked for each channel/denom pair. Its quota
 /// represents rate limit configuration, and the flow its
 /// current state (i.e.: how much value has been transfered in the current period)
@@ -317,6 +380,126 @@ fn calculate_channel_value(
             }
         }
         FlowType::In => channel_value,
+    }
+}
+
+impl RateLimitType {
+    pub fn undo_flow(&mut self, direction: FlowType, funds: Uint256) {
+        let flow = match self {
+            Self::V1 { quota: _, flow } => flow,
+            Self::V2 { quota: _, flow} => flow
+        };
+        flow.undo_flow(direction, funds)
+    }
+    pub fn flow_period_end(&self) -> Timestamp {
+        match self {
+            RateLimitType::V1 { quota: _, flow } => {
+                flow.period_end
+            }
+            RateLimitType::V2 { quota: _, flow } => {
+                flow.period_end
+            }
+        }
+    }
+    pub fn flow_balance(&self) -> (Uint256, Uint256) {
+        match self {
+            RateLimitType::V1 { quota, flow } => {
+                flow.balance()
+            }
+            RateLimitType::V2 { quota, flow } => {
+                flow.balance()
+            }
+        }
+    }
+    pub fn quota_capacity(&self) -> (Uint256, Uint256) {
+        match self {
+            RateLimitType::V1 { quota, flow } => {
+                quota.capacity()
+            }
+            RateLimitType::V2 { quota, flow } => {
+                quota.capacity()
+            }
+        }
+    }
+    pub fn quota_name(&self) ->  String  {
+        match self {
+            RateLimitType::V1 { quota, flow } =>quota.name(),
+            RateLimitType::V2 { quota, flow } => quota.name(),
+        }
+    }
+    pub fn period_end(&self) ->  String  {
+        match self {
+            RateLimitType::V1 { quota, flow } =>quota.name(),
+            RateLimitType::V2 { quota, flow } => quota.name(),
+        }
+    }
+    pub fn expire_flow(&mut self, now: Timestamp) {
+        match self {
+            RateLimitType::V1 { quota, flow } =>flow.expire(now, quota.clone().duration()),
+            RateLimitType::V2 { quota, flow } => flow.expire(now, quota.clone().duration()),
+        }
+    }
+    /// Checks if a transfer is allowed and updates the data structures
+    /// accordingly.
+    ///
+    /// If the transfer is not allowed, it will return a RateLimitExceeded error.
+    ///
+    /// Otherwise it will return a RateLimitResponse with the updated data structures
+    pub fn allow_transfer(
+        &mut self,
+        path: &Path,
+        direction: &FlowType,
+        funds: Uint256,
+        channel_value: Uint256,
+        now: Timestamp,
+    ) -> Result<Self, ContractError> {
+        let (quota, flow, is_v2) = match self {
+            RateLimitType::V1 { quota, flow} => (quota, flow, false),
+            RateLimitType::V2 { quota, flow} => (quota, flow, true)
+        };
+        // Flow used before this transaction is applied.
+        // This is used to make error messages more informative
+        let initial_flow = flow.balance_on(direction);
+        // Apply the transfer. From here on, we will updated the flow with the new transfer
+        // and check if  it exceeds the quota at the current time
+        let expired = flow.apply_transfer_v2(direction, funds, now, &quota);
+        let (max_in, max_out) = match quota {
+            QuotaType::V1(quota) => {
+                if quota.channel_value.is_none() || expired {
+                    quota.channel_value = Some(calculate_channel_value(channel_value, &path.denom, funds, direction));
+                }
+                quota.capacity()
+            }
+            QuotaType::V2(quota) => {
+                if quota.channel_value.is_none() || expired {
+                    quota.channel_value = Some(calculate_channel_value(channel_value, &path.denom, funds, direction));
+                }
+                quota.capacity()
+            }
+        };
+        if flow.exceeds(direction, max_in, max_out) {
+            return Err(ContractError::RateLimitExceded {
+                channel: path.channel.to_string(),
+                denom: path.denom.to_string(),
+                amount: funds,
+                quota_name: quota.name(),
+                used: initial_flow,
+                max: quota.capacity_on(direction),
+                reset: flow.period_end,
+            });
+        } else {
+            if is_v2 {
+                Ok(RateLimitType::V2 {
+                    quota: quota.clone(),
+                    flow: *flow,
+                })
+            } else {
+                Ok(RateLimitType::V1 {
+                    quota: quota.clone(),
+                    flow: *flow,
+                })
+            }
+        }
     }
 }
 
@@ -373,59 +556,6 @@ impl RateLimit {
     }
 }
 
-impl RateLimitV2 {
-    /// Checks if a transfer is allowed and updates the data structures
-    /// accordingly.
-    ///
-    /// If the transfer is not allowed, it will return a RateLimitExceeded error.
-    ///
-    /// Otherwise it will return a RateLimitResponse with the updated data structures
-    pub fn allow_transfer(
-        &mut self,
-        path: &Path,
-        direction: &FlowType,
-        funds: Uint256,
-        channel_value: Uint256,
-        now: Timestamp,
-    ) -> Result<Self, ContractError> {
-        // Flow used before this transaction is applied.
-        // This is used to make error messages more informative
-        let initial_flow = self.flow.balance_on(direction);
-
-        // Apply the transfer. From here on, we will updated the flow with the new transfer
-        // and check if  it exceeds the quota at the current time
-
-        self.flow.apply_transfer_v2(direction, funds, now, &self.quota);
-        // Cache the channel value if it has never been set or it has expired.
-        if self.quota.channel_value.is_none() {
-            self.quota.channel_value = Some(calculate_channel_value(
-                channel_value,
-                &path.denom,
-                funds,
-                direction,
-            ))
-        }
-
-        let (max_in, max_out) = self.quota.capacity();
-        // Return the effects of applying the transfer or an error.
-        match self.flow.exceeds(direction, max_in, max_out) {
-            true => Err(ContractError::RateLimitExceded {
-                channel: path.channel.to_string(),
-                denom: path.denom.to_string(),
-                amount: funds,
-                quota_name: String::default(),
-                used: initial_flow,
-                max: self.quota.capacity_on(direction),
-                reset: self.flow.period_end,
-            }),
-            false => Ok(RateLimitV2 {
-                quota: self.quota.clone(), // Cloning here because self.quota.name (String) does not allow us to implement Copy
-                flow: self.flow, // We can Copy flow, so this is slightly more efficient than cloning the whole RateLimit
-            }),
-        }
-    }
-}
-
 /// Only this address can manage the contract. This will likely be the
 /// governance module, but could be set to something else if needed
 pub const GOVMODULE: Item<Addr> = Item::new("gov_module");
@@ -451,9 +581,9 @@ pub const IBCMODULE: Item<Addr> = Item::new("ibc_module");
 /// The map key (String, String) represents (channel_id, denom). We use
 /// composite keys instead of a struct to avoid having to implement the
 /// PrimaryKey trait
-pub const RATE_LIMIT_TRACKERS: Map<(String, String), Vec<RateLimit>> = Map::new("flow");
+pub const RATE_LIMIT_TRACKERS_LEGACY: Map<(String, String), Vec<RateLimit>> = Map::new("flow");
 
-pub const RATE_LIMIT_TRACKERS_V2: Map<(String, String), Vec<RateLimitV2>> = Map::new("flow_v2");
+pub const RATE_LIMIT_TRACKERS: Map<(String, String), Vec<RateLimitType>> = Map::new("flow");
 
 #[cfg(test)]
 pub mod tests {

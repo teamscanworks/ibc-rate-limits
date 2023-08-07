@@ -2,7 +2,7 @@ use cosmwasm_std::{DepsMut, Response, Timestamp, Uint256};
 
 use crate::{
     packet::Packet,
-    state::{FlowType, Path, RateLimit, RATE_LIMIT_TRACKERS},
+    state::{FlowType, Path, RateLimit, RATE_LIMIT_TRACKERS, RateLimitType},
     ContractError,
 };
 
@@ -76,12 +76,12 @@ pub fn try_transfer(
 
     // If any of the RateLimits fails, allow_transfer() will return
     // ContractError::RateLimitExceded, which we'll propagate out
-    let results: Vec<RateLimit> = trackers
+    let results: Vec<RateLimitType> = trackers
         .iter_mut()
         .map(|limit| limit.allow_transfer(path, &direction, funds, channel_value, now))
         .collect::<Result<_, ContractError>>()?;
 
-    let any_results: Vec<RateLimit> = any_trackers
+    let any_results: Vec<RateLimitType> = any_trackers
         .iter_mut()
         .map(|limit| limit.allow_transfer(path, &direction, funds, channel_value, now))
         .collect::<Result<_, ContractError>>()?;
@@ -106,28 +106,29 @@ pub fn try_transfer(
 }
 
 // #[cfg(any(feature = "verbose_responses", test))]
-fn add_rate_limit_attributes(response: Response, result: &RateLimit) -> Response {
-    let (used_in, used_out) = result.flow.balance();
-    let (max_in, max_out) = result.quota.capacity();
+fn add_rate_limit_attributes(response: Response, result: &RateLimitType) -> Response {
+    let (used_in, used_out) = result.flow_balance();
+    let (max_in, max_out) = result.quota_capacity();
+    let quota_name = result.quota_name();
     // These attributes are only added during testing. That way we avoid
     // calculating these again on prod.
     response
         .add_attribute(
-            format!("{}_used_in", result.quota.name),
+            format!("{quota_name}_used_in"),
             used_in.to_string(),
         )
         .add_attribute(
-            format!("{}_used_out", result.quota.name),
+            format!("{quota_name}_used_out"),
             used_out.to_string(),
         )
-        .add_attribute(format!("{}_max_in", result.quota.name), max_in.to_string())
+        .add_attribute(format!("{quota_name}_max_in"), max_in.to_string())
         .add_attribute(
-            format!("{}_max_out", result.quota.name),
+            format!("{quota_name}_max_out"),
             max_out.to_string(),
         )
         .add_attribute(
-            format!("{}_period_end", result.quota.name),
-            result.flow.period_end.to_string(),
+            format!("{quota_name}_period_end"),
+            result.flow_period_end().to_string(),
         )
 }
 
@@ -167,17 +168,17 @@ pub fn undo_send(deps: DepsMut, packet: Packet) -> Result<Response, ContractErro
     }
 
     // We force update the flow to remove a failed send
-    let results: Vec<RateLimit> = trackers
+    let results: Vec<RateLimitType> = trackers
         .iter_mut()
         .map(|limit| {
-            limit.flow.undo_flow(FlowType::Out, funds);
+            limit.undo_flow(FlowType::Out, funds);
             limit.to_owned()
         })
         .collect();
-    let any_results: Vec<RateLimit> = any_trackers
+    let any_results: Vec<RateLimitType> = any_trackers
         .iter_mut()
         .map(|limit| {
-            limit.flow.undo_flow(FlowType::Out, funds);
+            limit.undo_flow(FlowType::Out, funds);
             limit.to_owned()
         })
         .collect();

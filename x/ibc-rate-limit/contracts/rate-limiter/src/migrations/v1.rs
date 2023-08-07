@@ -1,8 +1,10 @@
 use cosmwasm_std::{DepsMut, Env, Event, Response, StdError};
 use cw2::{get_contract_version, set_contract_version, ContractVersion};
 
-use crate::{contract::CONTRACT_NAME, msg::MigrateMsg, ContractError, state::{RATE_LIMIT_TRACKERS, RateLimitV2, QuotaV2, RATE_LIMIT_TRACKERS_V2}};
+use crate::{contract::CONTRACT_NAME, msg::MigrateMsg, ContractError, state::{RATE_LIMIT_TRACKERS, RateLimitV2, QuotaV2,  RateLimitType, RATE_LIMIT_TRACKERS_LEGACY}};
 
+// migrates storage from RateLimit to RateLimitType, allowing for adding additional rate limit variants
+// without more complex migrations
 pub(crate) fn v1_migrate(
     stored_version: semver::Version,
     code_version: semver::Version,
@@ -12,35 +14,19 @@ pub(crate) fn v1_migrate(
 ) -> Result<Response, ContractError> {
 
 
-    let rate_limit_rules = RATE_LIMIT_TRACKERS.keys(deps.storage, None, None, cosmwasm_std::Order::Ascending).flat_map(|k| {
-        if let Ok(k) = k {
-            if let Ok(res) = RATE_LIMIT_TRACKERS.load(deps.storage, k.clone()) {
-                Some((k, res))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }).collect::<Vec<_>>();
+    // load the legacy format
+    let rate_limit_rules = RATE_LIMIT_TRACKERS_LEGACY.range(deps.storage, None, None, cosmwasm_std::Order::Ascending).flatten().collect::<Vec<_>>();
 
-    // nuke the old data
-    RATE_LIMIT_TRACKERS.clear(deps.storage);
+
+
 
     let mut rules_migrated = 0;
-
-    for (k, rules) in rate_limit_rules {
-        let rules = rules.into_iter().map(|rule| RateLimitV2 {
-            quota: QuotaV2 {
-                max_percentage_recv: rule.quota.max_percentage_recv,
-                max_percentage_send: rule.quota.max_percentage_send,
-                channel_value: rule.quota.channel_value,
-            },
-            flow: rule.flow
-        }).collect::<Vec<RateLimitV2>>();
+    rate_limit_rules.into_iter().for_each(|(key, rules)| {
+        let rules = rules.into_iter().map(|rule| RateLimitType::from(rule)).collect::<Vec<_>>();
         rules_migrated += rules.len() as u64;
-        RATE_LIMIT_TRACKERS_V2.save(deps.storage, k, &rules)?;
-    }
+        // override the namespace entry with the new format
+        RATE_LIMIT_TRACKERS.save(deps.storage, key, &rules).unwrap();
+    });
 
     Ok(Response::default().add_event(
         Event::new("migration_ok")
