@@ -1,4 +1,8 @@
 #![cfg(test)]
+use cosmwasm_std::Deps;
+use cosmwasm_std::DepsMut;
+use cosmwasm_std::Env;
+use cosmwasm_std::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -6,6 +10,9 @@ use cosmwasm_std::{to_binary, Addr, CosmosMsg, StdResult, WasmMsg};
 
 use crate::msg::ExecuteMsg;
 use crate::msg::SudoMsg;
+use crate::state::RateLimit;
+use crate::state::RATE_LIMIT_TRACKERS;
+use crate::ContractError;
 
 /// CwTemplateContract is a wrapper around Addr that provides a lot of helpers
 /// for working with this.
@@ -34,6 +41,47 @@ impl RateLimitingContract {
             msg,
         })
     }
+}
+
+/// helper function that is used to iterate over all existing rate limits automatically expiring flows for rules which have passed the end period
+pub fn rollover_expired_rate_limits(deps: DepsMut, env: Env) -> Result<(), ContractError> {
+    // possible alternative here is to not collect the iterator, and then use a dequeue or something similiar to track rate limit keys that need to be updated
+    for (key, mut rules) in RATE_LIMIT_TRACKERS.range(deps.storage, None, None, cosmwasm_std::Order::Ascending).flatten().collect::<Vec<_>>() {
+        // avoid storage saves unless an actual rule was updated
+        let mut rule_updated = false;
+        rules.iter_mut().for_each(|rule| {
+            if rule.flow.is_expired(env.block.time) {
+                rule.flow.expire(env.block.time, rule.quota.duration);
+                rule_updated = true;
+            }
+        });
+        if rule_updated {
+            RATE_LIMIT_TRACKERS.save(deps.storage, key, &rules)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// returns all rate limits that have expired and can be rolled over
+pub fn expired_rate_limits(deps: Deps, time: Timestamp) -> Vec<((String, String), Vec<RateLimit>)> {
+    RATE_LIMIT_TRACKERS
+        .range(deps.storage, None, None, cosmwasm_std::Order::Ascending)
+        .flatten()
+        .filter_map(|(k, rules)| {
+            let rules = rules
+            .into_iter()
+            .filter(|rule| rule.flow.is_expired(time))
+            .collect::<Vec<_>>();
+            if rules.is_empty() {
+                return None;
+            }
+            Some((
+                k,
+                rules,
+            ))
+        })
+        .collect()
 }
 
 pub mod tests {
