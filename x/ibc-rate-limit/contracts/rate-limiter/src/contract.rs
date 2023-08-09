@@ -97,6 +97,10 @@ pub fn sudo(deps: DepsMut, env: Env, msg: SudoMsg) -> Result<Response, ContractE
             channel_value_mock,
         ),
         SudoMsg::UndoSend { packet } => sudo::undo_send(deps, packet),
+        SudoMsg::RolloverRules => {
+            crate::helpers::rollover_expired_rate_limits(deps, env)?;
+            Ok(Response::default())
+        },
     }
 }
 

@@ -99,6 +99,7 @@ pub enum SudoMsg {
     UndoSend {
         packet: Packet,
     },
+    RolloverRules,
 }
 
 #[cw_serde]

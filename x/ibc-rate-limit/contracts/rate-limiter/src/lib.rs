@@ -18,7 +18,7 @@ mod sudo;
 #[cfg(test)]
 pub mod contract_tests;
 
-mod helpers;
+pub(crate) mod helpers;
 mod integration_tests;
 
 pub use crate::error::ContractError;

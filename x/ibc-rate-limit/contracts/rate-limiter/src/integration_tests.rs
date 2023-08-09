@@ -415,3 +415,139 @@ fn add_paths_later() {
     let cosmos_msg = cw_rate_limit_contract.sudo(msg);
     app.sudo(cosmos_msg).unwrap_err();
 }
+
+
+#[test] // Tests we can have different maximums for different quotaas (daily, weekly, etc) and that they all are active at the same time
+fn rate_limit_rollover() {
+    let quotas = vec![
+        QuotaMsg::new("daily", RESET_TIME_DAILY, 1, 1),
+        QuotaMsg::new("weekly", RESET_TIME_WEEKLY, 5, 5),
+        QuotaMsg::new("monthly", RESET_TIME_MONTHLY, 5, 5),
+    ];
+
+    let (mut app, cw_rate_limit_contract) = proper_instantiate(vec![PathMsg {
+        channel_id: format!("any"),
+        denom: format!("denom"),
+        quotas,
+    }]);
+
+    // Sending 1% to use the daily allowance
+    let msg = test_msg_send!(
+        channel_id: format!("channel"),
+        denom: format!("denom"),
+        channel_value: 101_u32.into(),
+        funds: 1_u32.into()
+    );
+    let cosmos_msg = cw_rate_limit_contract.sudo(msg);
+    app.sudo(cosmos_msg).unwrap();
+
+    // Another packet is rate limited
+    let msg = test_msg_send!(
+        channel_id: format!("channel"),
+        denom: format!("denom"),
+        channel_value: 101_u32.into(),
+        funds: 1_u32.into()
+    );
+    let cosmos_msg = cw_rate_limit_contract.sudo(msg);
+    app.sudo(cosmos_msg).unwrap_err();
+
+    // ... One day passes
+    app.update_block(|b| {
+        b.height += 10;
+        b.time = b.time.plus_seconds(RESET_TIME_DAILY + 1)
+    });
+
+    // Sending the packet should work now
+    let msg = test_msg_send!(
+        channel_id: format!("channel"),
+        denom: format!("denom"),
+        channel_value: 101_u32.into(),
+        funds: 1_u32.into()
+    );
+
+    let cosmos_msg = cw_rate_limit_contract.sudo(msg);
+    app.sudo(cosmos_msg).unwrap();
+
+    // Do that for 4 more days
+    for _ in 1..4 {
+        // ... One day passes
+        app.update_block(|b| {
+            b.height += 10;
+            b.time = b.time.plus_seconds(RESET_TIME_DAILY + 1)
+        });
+
+        // Sending the packet should work now
+        let msg = test_msg_send!(
+            channel_id: format!("channel"),
+            denom: format!("denom"),
+            channel_value: 101_u32.into(),
+            funds: 1_u32.into()
+        );
+        let cosmos_msg = cw_rate_limit_contract.sudo(msg);
+        app.sudo(cosmos_msg).unwrap();
+    }
+
+    // ... One day passes
+    app.update_block(|b| {
+        b.height += 10;
+        b.time = b.time.plus_seconds(RESET_TIME_DAILY + 1)
+    });
+
+    // We now have exceeded the weekly limit!  Even if the daily limit allows us, the weekly doesn't
+    let msg = test_msg_send!(
+        channel_id: format!("channel"),
+        denom: format!("denom"),
+        channel_value: 101_u32.into(),
+        funds: 1_u32.into()
+    );
+    let cosmos_msg = cw_rate_limit_contract.sudo(msg);
+    app.sudo(cosmos_msg).unwrap_err();
+
+    // ... One week passes
+    app.update_block(|b| {
+        b.height += 10;
+        b.time = b.time.plus_seconds(RESET_TIME_WEEKLY + 1)
+    });
+
+    // We can still can't send because the weekly and monthly limits are the same
+    let msg = test_msg_send!(
+        channel_id: format!("channel"),
+        denom: format!("denom"),
+        channel_value: 101_u32.into(),
+        funds: 1_u32.into()
+    );
+    let cosmos_msg = cw_rate_limit_contract.sudo(msg);
+    app.sudo(cosmos_msg).unwrap_err();
+
+    // Waiting a week again, doesn't help!!
+    // ... One week passes
+    app.update_block(|b| {
+        b.height += 10;
+        b.time = b.time.plus_seconds(RESET_TIME_WEEKLY + 1)
+    });
+
+    // We can still can't send because the  monthly limit hasn't passed
+    let msg = test_msg_send!(
+        channel_id: format!("channel"),
+        denom: format!("denom"),
+        channel_value: 101_u32.into(),
+        funds: 1_u32.into()
+    );
+    let cosmos_msg = cw_rate_limit_contract.sudo(msg);
+    app.sudo(cosmos_msg).unwrap_err();
+
+    // Only after two more weeks we can send again
+    app.update_block(|b| {
+        b.height += 10;
+        b.time = b.time.plus_seconds((RESET_TIME_WEEKLY * 2) + 1) // Two weeks
+    });
+
+    let msg = test_msg_send!(
+        channel_id: format!("channel"),
+        denom: format!("denom"),
+        channel_value: 101_u32.into(),
+        funds: 1_u32.into()
+    );
+    let cosmos_msg = cw_rate_limit_contract.sudo(msg);
+    app.sudo(cosmos_msg).unwrap();
+}
