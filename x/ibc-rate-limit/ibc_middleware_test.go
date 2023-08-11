@@ -538,3 +538,61 @@ func (suite *MiddlewareTestSuite) TestUnsetRateLimitingContract() {
 	// N.B.: this panics if validation fails.
 	paramSpace.SetParamSet(suite.chainA.GetContext(), &params)
 }
+
+// Test rate limiting on sends
+func (suite *MiddlewareTestSuite) Test_RateLimit_RollOver_Native() {
+	// Sends denom=stake from A->B. Rate limit receives "stake" in the packet. Nothing to do in the contract
+	suite.fullSendTest(true)
+}
+
+// Test rate limiting on sends
+func (suite *MiddlewareTestSuite) Test_RateLimit_RollOver_NonNative() {
+	quotaPercentage := 5
+
+	suite.initializeEscrow()
+	denom := sdk.DefaultBondDenom
+	//denomTrace := transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom("transfer", "channel-0", denom))
+	//fmt.Println(denomTrace)
+	//denom = denomTrace.IBCDenom()
+	channel := "channel-0"
+
+	osmosisApp := suite.chainA.GetOsmosisApp()
+
+	// This is the first one. Inside the tests. It works as expected.
+	channelValue := CalculateChannelValue(suite.chainA.GetContext(), denom, osmosisApp.BankKeeper)
+
+	// The amount to be sent is send 2.5% (quota is 5%)
+	quota := channelValue.QuoRaw(int64(100 / quotaPercentage))
+	sendAmount := quota.QuoRaw(2)
+
+	// Setup contract
+	suite.chainA.StoreContractCode(&suite.Suite, "./bytecode/rate_limiter.wasm")
+	quotas := suite.BuildChannelQuota("weekly", channel, denom, 604800, 5, 5)
+	addr := suite.chainA.InstantiateRLContract(&suite.Suite, quotas)
+	suite.chainA.RegisterRateLimitingContract(addr)
+
+	_, err := suite.AssertSend(true, suite.MessageFromAToB(denom, sendAmount))
+	suite.Require().NoError(err)
+	r, _ := suite.AssertSend(true, suite.MessageFromAToB(denom, sdk.NewInt(sendAmount.Int64()/2)))
+	attrs := suite.ExtractAttributes(suite.FindEvent(r.GetEvents(), "wasm"))
+	used, ok := sdk.NewIntFromString(attrs["weekly_used_out"])
+	suite.Require().True(ok)
+
+	suite.Require().Equal(used, sdk.NewInt(3750000000000337500))
+
+	//	key := fmt.Sprintf(`'{"get_quotas": {"channel_id": "%s", "denom": "%s"}}'`, channel, denom)
+	key := `{"get_quotas": {}}`
+	fmt.Println("key ", key)
+	cInfo := suite.chainA.GetOsmosisApp().WasmKeeper.GetContractInfo(
+		suite.chainA.GetContext(),
+		addr,
+	)
+	fmt.Printf("contract info %+v\n", cInfo)
+	res := suite.chainA.GetOsmosisApp().WasmKeeper.QueryRaw(
+		suite.chainA.GetContext(),
+		addr,
+		[]byte(key),
+	)
+	//suite.Require().NoError(err)
+	fmt.Printf("response %s\n", string(res))
+}
