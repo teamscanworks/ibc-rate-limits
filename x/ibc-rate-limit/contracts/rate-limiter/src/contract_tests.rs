@@ -1,7 +1,8 @@
 #![cfg(test)]
 use std::collections::HashMap;
 
-use crate::helpers::{expired_rate_limits, rollover_expired_rate_limits};
+use crate::helpers::{expired_rate_limits};
+use crate::state::rollover_expired_rate_limits;
 use crate::msg::MigrateMsg;
 
 use crate::packet::Packet;

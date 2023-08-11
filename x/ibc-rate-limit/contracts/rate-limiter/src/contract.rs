@@ -98,7 +98,7 @@ pub fn sudo(deps: DepsMut, env: Env, msg: SudoMsg) -> Result<Response, ContractE
         ),
         SudoMsg::UndoSend { packet } => sudo::undo_send(deps, packet),
         SudoMsg::RolloverRules => {
-            crate::helpers::rollover_expired_rate_limits(deps, env)?;
+            crate::state::rollover_expired_rate_limits(deps, env)?;
             Ok(Response::default())
         },
     }
