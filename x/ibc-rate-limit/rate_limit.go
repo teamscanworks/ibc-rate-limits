@@ -79,10 +79,6 @@ func UndoSendRateLimit(ctx sdk.Context, contractKeeper *wasmkeeper.PermissionedK
 	return nil
 }
 
-type RolloverRulesMsg struct {
-	RolloverRules struct{} `json:"rollover_rules"`
-}
-
 type SendPacketMsg struct {
 	SendPacket PacketMsg `json:"send_packet"`
 }

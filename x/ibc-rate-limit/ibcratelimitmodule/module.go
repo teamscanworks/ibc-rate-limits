@@ -139,7 +139,6 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 func (am AppModule) BeginBlock(ctx sdk.Context, _ abci.RequestBeginBlock) {
 	contract := am.ics4wrapper.GetContractAddress(ctx)
 	if contract == "" {
-		fmt.Println("[WARN] contract address is empty")
 		return
 	}
 	contractAddr, err := sdk.AccAddressFromBech32(contract)
@@ -147,7 +146,7 @@ func (am AppModule) BeginBlock(ctx sdk.Context, _ abci.RequestBeginBlock) {
 		fmt.Printf("[ERROR] failed to parse contract address %v\n", err)
 		return
 	}
-	asJson, err := json.Marshal(&ibcratelimit.RolloverRulesMsg{})
+	asJson, err := json.Marshal("rollover_rules")
 	if err != nil {
 		fmt.Printf("[ERROR] failed to marshal rollover msg %v\n", err)
 		return
