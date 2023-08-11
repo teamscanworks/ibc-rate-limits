@@ -13,6 +13,8 @@ pub(crate) const CONTRACT_NAME: &str = "crates.io:rate-limiter";
 
 pub(crate) const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+
+
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     deps: DepsMut,
@@ -98,7 +100,7 @@ pub fn sudo(deps: DepsMut, env: Env, msg: SudoMsg) -> Result<Response, ContractE
         ),
         SudoMsg::UndoSend { packet } => sudo::undo_send(deps, packet),
         SudoMsg::RolloverRules => {
-            crate::state::rollover_expired_rate_limits(deps, env)?;
+            crate::sudo::rollover_expired_rate_limits(deps, env)?;
             Ok(Response::default())
         },
     }

@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 
 use crate::helpers::{expired_rate_limits};
-use crate::state::rollover_expired_rate_limits;
+use crate::sudo::rollover_expired_rate_limits;
 use crate::msg::MigrateMsg;
 
 use crate::packet::Packet;
@@ -10,13 +10,16 @@ use crate::{contract::*, test_msg_recv, test_msg_send, ContractError};
 use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MockApi, MockStorage, MockQuerier};
 use cosmwasm_std::{from_binary, Addr, Attribute, Env, Uint256, Querier, OwnedDeps, MemoryStorage};
 use cw_multi_test::{App, AppBuilder, BankKeeper, ContractWrapper, Executor};
-
+use cosmwasm_std::Timestamp;
 use crate::helpers::tests::verify_query_response;
 use crate::msg::{InstantiateMsg, PathMsg, QueryMsg, QuotaMsg, SudoMsg};
 use crate::state::tests::{RESET_TIME_WEEKLY, RESET_TIME_DAILY, RESET_TIME_MONTHLY};
 use crate::state::{RateLimit, GOVMODULE, IBCMODULE, RATE_LIMIT_TRACKERS};
 const IBC_ADDR: &str = "IBC_MODULE";
 const GOV_ADDR: &str = "GOV_MODULE";
+
+pub const SECONDS_PER_DAY: u64 = 86400;
+pub const SECONDS_PER_HOUR: u64 = 3600;
 
 pub(crate) struct TestEnv {
     pub env: Env,
@@ -37,6 +40,15 @@ fn new_test_env(paths: &[PathMsg]) -> TestEnv {
     TestEnv {
         deps,
         env,
+    }
+}
+
+impl TestEnv {
+    pub fn plus_hours(&mut self, hours: u64) {
+        self.env.block.time = self.env.block.time.plus_seconds( hours * SECONDS_PER_HOUR);
+    }
+    pub fn plus_days(&mut self, days: u64) {
+        self.env.block.time = self.env.block.time.plus_seconds(days * SECONDS_PER_DAY);
     }
 }
 
@@ -465,14 +477,14 @@ fn test_expired_rate_limits() {
     assert_eq!(expired_limits.len(), 0);
 
     // advance timestamp by half day
-    test_env.env.block.time = test_env.env.block.time.plus_hours(12);
+    test_env.plus_hours(12);
 
     // still no rules should be expired
     let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
     assert_eq!(expired_limits.len(), 0);
 
     // advance timestamp by 13 hours
-    test_env.env.block.time = test_env.env.block.time.plus_hours(13);
+    test_env.plus_hours(13);
 
     // only 1 rule should be expired
     let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
@@ -480,7 +492,7 @@ fn test_expired_rate_limits() {
     assert_eq!(expired_limits[0].1[0].quota.name, "daily");
 
     // advance timestamp by 6 days
-    test_env.env.block.time = test_env.env.block.time.plus_days(6);
+    test_env.plus_days(6);
 
     // weekly + daily rules should be expired
     let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
@@ -489,10 +501,9 @@ fn test_expired_rate_limits() {
     // this test shouldn't fail
     assert_eq!(expired_limits[0].1[0].quota.name, "daily");
     assert_eq!(expired_limits[0].1[1].quota.name, "weekly");
-
     // advance timestamp by 24 days for a total of 31 days passed
-    test_env.env.block.time = test_env.env.block.time.plus_days(24);
-
+    test_env.plus_days(24);
+ 
     // daily, weekly, monthly rules should be expired
     let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
     assert_eq!(expired_limits[0].1.len(), 3);
@@ -534,7 +545,7 @@ fn test_rollover_expired_rate_limits() {
     assert_eq!(expired_limits.len(), 0);
 
     // advance timestamp by a day
-    test_env.env.block.time = test_env.env.block.time.plus_hours(25);
+    test_env.plus_hours(25);
 
     // only 1 rule should be expired
     let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
@@ -553,14 +564,14 @@ fn test_rollover_expired_rate_limits() {
     assert!(daily_rules_changed.get("monthly").unwrap().flow.period_end == original_rules.get("monthly").unwrap().flow.period_end);
 
     // advance timestamp by half day, no rules should be changed
-    test_env.env.block.time = test_env.env.block.time.plus_hours(12);
+    test_env.plus_hours(12);
 
     // there should be no expired rate limits
     let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
     assert_eq!(expired_limits.len(), 0);
 
     // advance timestamp by another half day
-    test_env.env.block.time = test_env.env.block.time.plus_hours(13);
+    test_env.plus_hours(13);
 
     // daily rule should change again
     rollover_expired_rate_limits(test_env.deps.as_mut(), test_env.env.clone()).unwrap();
@@ -573,7 +584,7 @@ fn test_rollover_expired_rate_limits() {
     assert!(daily_rules_changed2.get("monthly").unwrap().flow.period_end == original_rules.get("monthly").unwrap().flow.period_end);
 
     // advance timestamp by 6 days
-    test_env.env.block.time = test_env.env.block.time.plus_days(6);
+    test_env.plus_days(6);
 
     // daily rule + weekly rules should change
     rollover_expired_rate_limits(test_env.deps.as_mut(), test_env.env.clone()).unwrap();
@@ -587,7 +598,7 @@ fn test_rollover_expired_rate_limits() {
     assert!(weekly_rules_changed.get("monthly").unwrap().flow.period_end == original_rules.get("monthly").unwrap().flow.period_end);
 
     // advance timestamp by 24 days
-    test_env.env.block.time = test_env.env.block.time.plus_days(24);
+    test_env.plus_days(24);
 
     // all rules should now rollover
     rollover_expired_rate_limits(test_env.deps.as_mut(), test_env.env.clone()).unwrap();

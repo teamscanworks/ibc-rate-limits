@@ -1,4 +1,4 @@
-use cosmwasm_std::{DepsMut, Response, Timestamp, Uint256};
+use cosmwasm_std::{DepsMut, Response, Timestamp, Uint256, Env};
 
 use crate::{
     packet::Packet,
@@ -190,4 +190,25 @@ pub fn undo_send(deps: DepsMut, packet: Packet) -> Result<Response, ContractErro
         .add_attribute("channel_id", path.channel.to_string())
         .add_attribute("denom", path.denom.to_string())
         .add_attribute("any_channel", (!any_trackers.is_empty()).to_string()))
+}
+
+
+/// helper function that is used to iterate over all existing rate limits automatically expiring flows for rules which have passed the end period
+pub fn rollover_expired_rate_limits(deps: DepsMut, env: Env) -> Result<(), ContractError> {
+    // possible alternative here is to not collect the iterator, and then use a dequeue or something similiar to track rate limit keys that need to be updated
+    for (key, mut rules) in RATE_LIMIT_TRACKERS.range(deps.storage, None, None, cosmwasm_std::Order::Ascending).flatten().collect::<Vec<_>>() {
+        // avoid storage saves unless an actual rule was updated
+        let mut rule_updated = false;
+        rules.iter_mut().for_each(|rule| {
+            if rule.flow.is_expired(env.block.time) {
+                rule.flow.expire(env.block.time, rule.quota.duration);
+                rule_updated = true;
+            }
+        });
+        if rule_updated {
+            RATE_LIMIT_TRACKERS.save(deps.storage, key, &rules)?;
+        }
+    }
+
+    Ok(())
 }

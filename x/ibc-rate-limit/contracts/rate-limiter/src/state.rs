@@ -304,27 +304,6 @@ impl RateLimit {
         }
     }
 }
-
-/// helper function that is used to iterate over all existing rate limits automatically expiring flows for rules which have passed the end period
-pub fn rollover_expired_rate_limits(deps: DepsMut, env: Env) -> Result<(), ContractError> {
-    // possible alternative here is to not collect the iterator, and then use a dequeue or something similiar to track rate limit keys that need to be updated
-    for (key, mut rules) in RATE_LIMIT_TRACKERS.range(deps.storage, None, None, cosmwasm_std::Order::Ascending).flatten().collect::<Vec<_>>() {
-        // avoid storage saves unless an actual rule was updated
-        let mut rule_updated = false;
-        rules.iter_mut().for_each(|rule| {
-            if rule.flow.is_expired(env.block.time) {
-                rule.flow.expire(env.block.time, rule.quota.duration);
-                rule_updated = true;
-            }
-        });
-        if rule_updated {
-            RATE_LIMIT_TRACKERS.save(deps.storage, key, &rules)?;
-        }
-    }
-
-    Ok(())
-}
-
 /// Only this address can manage the contract. This will likely be the
 /// governance module, but could be set to something else if needed
 pub const GOVMODULE: Item<Addr> = Item::new("gov_module");
