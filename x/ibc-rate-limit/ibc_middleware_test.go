@@ -592,11 +592,6 @@ func (suite *MiddlewareTestSuite) Test_RateLimit_Rollover_NonNative() {
 	key := fmt.Sprintf(`{"get_quotas": {"channel_id": "%s", "denom": "%s"}}`, channel, denom)
 	chainCtx := suite.chainA.GetContext()
 	osmosisApp := suite.chainA.GetOsmosisApp()
-	/*for i := 0; i < 100; i++ {
-		suite.chainA.NextBlock()
-		err := suite.chainA.SenderAccount.SetSequence(suite.chainA.SenderAccount.GetSequence() + 1)
-		suite.Require().NoError(err)
-	}*/
 
 	res, err := osmosisApp.WasmKeeper.QuerySmart(chainCtx, contractAddress, []byte(key))
 	suite.Require().NoError(err)
@@ -608,12 +603,14 @@ func (suite *MiddlewareTestSuite) Test_RateLimit_Rollover_NonNative() {
 	periodEndInt, err := strconv.Atoi(periodEnd)
 	suite.Require().NoError(err)
 	initialPeriodEndTime := time.Unix(0, int64(periodEndInt))
+	output, ok = out[0]["quota"].(map[string]interface{})
+	suite.Require().True(ok)
+	initialChannelValue, ok := output["channel_value"].(string)
+	suite.Require().True(ok)
+	suite.Require().Equal(initialChannelValue, "100000000000009000000")
 
 	suite.chainA.Coordinator.IncrementTimeBy(time.Second * 604800)
-	fmt.Println("now ", suite.chainA.CurrentHeader.Time)
 
-	fmt.Println("quota ", out)
-	//suite.chainA.Coordinator.IncrementTimeBy(time.Hour * 24 * 8)
 	asJson, err := json.Marshal("rollover_rules")
 	_, err = osmosisApp.WasmKeeper.Sudo(
 		chainCtx,
@@ -631,9 +628,66 @@ func (suite *MiddlewareTestSuite) Test_RateLimit_Rollover_NonNative() {
 	periodEndInt, err = strconv.Atoi(periodEnd)
 	suite.Require().NoError(err)
 	currentPeriodEndTime := time.Unix(0, int64(periodEndInt))
-	fmt.Println("then ", currentPeriodEndTime)
+	output, ok = out[0]["quota"].(map[string]interface{})
+	suite.Require().True(ok)
+	currentChannelValue, ok := output["channel_value"].(string)
+	suite.Require().True(ok)
+	suite.Require().Equal(currentChannelValue, "0")
 
-	fmt.Println("quota ", out)
+	suite.Require().True(currentPeriodEndTime.After(initialPeriodEndTime))
+}
+
+func (suite *MiddlewareTestSuite) Test_RateLimit_Rollover_Native() {
+	attrs := suite.fullSendTest(false)
+	fmt.Println("start ", suite.chainA.CurrentHeader.Time)
+	contractAddress, err := sdk.AccAddressFromBech32(attrs["_contract_address"])
+	suite.Require().NoError(err)
+	denom := attrs["denom"]
+	channel := attrs["channel_id"]
+	key := fmt.Sprintf(`{"get_quotas": {"channel_id": "%s", "denom": "%s"}}`, channel, denom)
+	chainCtx := suite.chainA.GetContext()
+	osmosisApp := suite.chainA.GetOsmosisApp()
+
+	res, err := osmosisApp.WasmKeeper.QuerySmart(chainCtx, contractAddress, []byte(key))
+	suite.Require().NoError(err)
+	var out = make([]map[string]interface{}, 0)
+	suite.Require().NoError(json.Unmarshal(res, &out))
+	output, ok := out[0]["flow"].(map[string]interface{})
+	suite.Require().True(ok)
+	periodEnd := output["period_end"].(string)
+	periodEndInt, err := strconv.Atoi(periodEnd)
+	suite.Require().NoError(err)
+	initialPeriodEndTime := time.Unix(0, int64(periodEndInt))
+	output, ok = out[0]["quota"].(map[string]interface{})
+	suite.Require().True(ok)
+	initialChannelValue, ok := output["channel_value"].(string)
+	suite.Require().True(ok)
+	suite.Require().Equal(initialChannelValue, "4875000000000438750")
+
+	suite.chainA.Coordinator.IncrementTimeBy(time.Second * 604800)
+
+	asJson, err := json.Marshal("rollover_rules")
+	_, err = osmosisApp.WasmKeeper.Sudo(
+		chainCtx,
+		contractAddress,
+		asJson,
+	)
+	suite.Require().NoError(err)
+	res, err = osmosisApp.WasmKeeper.QuerySmart(chainCtx, contractAddress, []byte(key))
+	suite.Require().NoError(err)
+	out = make([]map[string]interface{}, 0)
+	suite.Require().NoError(json.Unmarshal(res, &out))
+	output, ok = out[0]["flow"].(map[string]interface{})
+	suite.Require().True(ok)
+	periodEnd = output["period_end"].(string)
+	periodEndInt, err = strconv.Atoi(periodEnd)
+	suite.Require().NoError(err)
+	currentPeriodEndTime := time.Unix(0, int64(periodEndInt))
+	output, ok = out[0]["quota"].(map[string]interface{})
+	suite.Require().True(ok)
+	currentChannelValue, ok := output["channel_value"].(string)
+	suite.Require().True(ok)
+	suite.Require().Equal(currentChannelValue, "0")
 
 	suite.Require().True(currentPeriodEndTime.After(initialPeriodEndTime))
 }
