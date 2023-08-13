@@ -225,6 +225,10 @@ impl From<&QuotaMsg> for Quota {
 pub struct RateLimit {
     pub quota: Quota,
     pub flow: Flow,
+    pub previous_channel_value: Option<Uint256>,
+    pub decayed_last_updated: Option<u64>,
+    pub decayed_value: Option<cosmwasm_std::Decimal256>,
+    pub period_start: Option<Timestamp>,
 }
 
 // The channel value on send depends on the amount on escrow. The ibc transfer
@@ -300,8 +304,42 @@ impl RateLimit {
             false => Ok(RateLimit {
                 quota: self.quota.clone(), // Cloning here because self.quota.name (String) does not allow us to implement Copy
                 flow: self.flow, // We can Copy flow, so this is slightly more efficient than cloning the whole RateLimit
+                previous_channel_value: None,
+                decayed_last_updated: None,
+                decayed_value: None,
+                period_start: Some(now),
             }),
         }
+    }
+    // returns the amount of time that has passed in the given time period, based on the current timestamp recorded in the block
+    // this transaction is executing in
+    pub fn period_percent_passed(&self, block_time_second: u64) -> Option<cosmwasm_std::Decimal256> {
+        // todo: measure the gas costs of calling `self.period_start.seconds()` twice vs storing the result of the function call in memory as is done now
+        let period_start_seconds = self.period_start?.seconds();
+        let period_end_seconds = self.flow.period_end.seconds();
+        return Some(cosmwasm_std::Decimal256::percent(((block_time_second - period_start_seconds) * 100) / (period_end_seconds - period_start_seconds)));
+    }
+    // checks if a decay operation should be applied to the value from the previous time period
+    // returning the existing decayed value if there is no difference in block height or timestamp
+    pub fn check_decay_rate(&mut self, env: cosmwasm_std::Env) -> Option<cosmwasm_std::Decimal256> {
+        if self.decayed_last_updated? == env.block.height {
+            return self.decayed_value;
+        }
+                // should realistically only happen the first period after the rate limit is initialized
+        if self.previous_channel_value?.is_zero() {
+            // todo: should we count the decimal places
+            return Some(cosmwasm_std::Decimal256::new(self.quota.channel_value?));
+            // return cosmwasm_std::Decimal::from_atomics(self.quota.channel_value?, 0).ok();
+        }
+
+        if self.period_start? == env.block.time {
+            // no time passed, return zero, this has the edge case of two blocks potentially having
+            // the same timestamp under certain conditions (fast block, loose constraints around timestamp requirements, etc...)
+            return self.decayed_value;
+        }
+        let percent_passed = self.period_percent_passed(env.block.time.seconds())?;
+        self.decayed_value = Some(cosmwasm_std::Decimal256::new(self.previous_channel_value?) * percent_passed);
+        return self.decayed_value;
     }
 }
 /// Only this address can manage the contract. This will likely be the

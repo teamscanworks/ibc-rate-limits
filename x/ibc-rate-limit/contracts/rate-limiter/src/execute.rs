@@ -1,7 +1,7 @@
 use crate::msg::{PathMsg, QuotaMsg};
 use crate::state::{Flow, Path, RateLimit, GOVMODULE, IBCMODULE, RATE_LIMIT_TRACKERS};
 use crate::ContractError;
-use cosmwasm_std::{Addr, DepsMut, Response, Timestamp};
+use cosmwasm_std::{Addr, DepsMut, Response, Timestamp, Uint256};
 
 pub fn add_new_paths(
     deps: DepsMut,
@@ -20,6 +20,10 @@ pub fn add_new_paths(
                 .map(|q| RateLimit {
                     quota: q.into(),
                     flow: Flow::new(0_u128, 0_u128, now, q.duration),
+                    decayed_last_updated: Some(0),
+                    previous_channel_value: Some(Uint256::zero()),
+                    decayed_value: Some(cosmwasm_std::Decimal256::zero()),
+                    period_start: Some(now),
                 })
                 .collect(),
         )?
