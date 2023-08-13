@@ -1,6 +1,7 @@
 package ibc_rate_limit_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -540,7 +541,7 @@ func (suite *MiddlewareTestSuite) TestUnsetRateLimitingContract() {
 }
 
 // Test rate limiting on sends
-func (suite *MiddlewareTestSuite) Test_Query_RateLimit() {
+func (suite *MiddlewareTestSuite) Test_Query_RateLimit_NonNative() {
 	// Sends denom=stake from A->B. Rate limit receives "stake" in the packet. Nothing to do in the contract
 	attrs := suite.fullSendTest(false)
 	contractAddress, err := sdk.AccAddressFromBech32(attrs["_contract_address"])
@@ -561,53 +562,78 @@ func (suite *MiddlewareTestSuite) Test_Query_RateLimit() {
 }
 
 // Test rate limiting on sends
-func (suite *MiddlewareTestSuite) Test_RateLimit_RollOver_NonNative() {
-	quotaPercentage := 5
-
-	suite.initializeEscrow()
-	denom := sdk.DefaultBondDenom
-	//denomTrace := transfertypes.ParseDenomTrace(transfertypes.GetPrefixedDenom("transfer", "channel-0", denom))
-	//fmt.Println(denomTrace)
-	//denom = denomTrace.IBCDenom()
-	channel := "channel-0"
-
-	osmosisApp := suite.chainA.GetOsmosisApp()
-
-	// This is the first one. Inside the tests. It works as expected.
-	channelValue := CalculateChannelValue(suite.chainA.GetContext(), denom, osmosisApp.BankKeeper)
-
-	// The amount to be sent is send 2.5% (quota is 5%)
-	quota := channelValue.QuoRaw(int64(100 / quotaPercentage))
-	sendAmount := quota.QuoRaw(2)
-
-	// Setup contract
-	suite.chainA.StoreContractCode(&suite.Suite, "./bytecode/rate_limiter.wasm")
-	quotas := suite.BuildChannelQuota("weekly", channel, denom, 604800, 5, 5)
-	addr := suite.chainA.InstantiateRLContract(&suite.Suite, quotas)
-	suite.chainA.RegisterRateLimitingContract(addr)
-
-	_, err := suite.AssertSend(true, suite.MessageFromAToB(denom, sendAmount))
+func (suite *MiddlewareTestSuite) Test_Query_RateLimit_Native() {
+	// Sends denom=stake from A->B. Rate limit receives "stake" in the packet. Nothing to do in the contract
+	attrs := suite.fullSendTest(true)
+	contractAddress, err := sdk.AccAddressFromBech32(attrs["_contract_address"])
 	suite.Require().NoError(err)
-	r, _ := suite.AssertSend(true, suite.MessageFromAToB(denom, sdk.NewInt(sendAmount.Int64()/2)))
-	attrs := suite.ExtractAttributes(suite.FindEvent(r.GetEvents(), "wasm"))
-	used, ok := sdk.NewIntFromString(attrs["weekly_used_out"])
+	denom := attrs["denom"]
+	channel := attrs["channel_id"]
+	key := fmt.Sprintf(`{"get_quotas": {"channel_id": "%s", "denom": "%s"}}`, channel, denom)
+
+	chainCtx := suite.chainA.GetContext()
+	osmosisApp := suite.chainA.GetOsmosisApp()
+	gotContract := osmosisApp.RateLimitingICS4Wrapper.GetContractAddress(chainCtx)
+	suite.Require().Equal(gotContract, attrs["_contract_address"])
+
+	res, err := osmosisApp.WasmKeeper.QuerySmart(chainCtx, contractAddress, []byte(key))
+	suite.Require().NoError(err)
+	suite.Require().NotNil(res)
+
+}
+
+func (suite *MiddlewareTestSuite) Test_RateLimit_Rollover_NonNative() {
+	attrs := suite.fullSendTest(true)
+	fmt.Println("start ", suite.chainA.CurrentHeader.Time)
+	contractAddress, err := sdk.AccAddressFromBech32(attrs["_contract_address"])
+	suite.Require().NoError(err)
+	denom := attrs["denom"]
+	channel := attrs["channel_id"]
+	key := fmt.Sprintf(`{"get_quotas": {"channel_id": "%s", "denom": "%s"}}`, channel, denom)
+	chainCtx := suite.chainA.GetContext()
+	osmosisApp := suite.chainA.GetOsmosisApp()
+	/*for i := 0; i < 100; i++ {
+		suite.chainA.NextBlock()
+		err := suite.chainA.SenderAccount.SetSequence(suite.chainA.SenderAccount.GetSequence() + 1)
+		suite.Require().NoError(err)
+	}*/
+
+	res, err := osmosisApp.WasmKeeper.QuerySmart(chainCtx, contractAddress, []byte(key))
+	suite.Require().NoError(err)
+	var out = make([]map[string]interface{}, 0)
+	suite.Require().NoError(json.Unmarshal(res, &out))
+	output, ok := out[0]["flow"].(map[string]interface{})
 	suite.Require().True(ok)
+	periodEnd := output["period_end"].(string)
+	periodEndInt, err := strconv.Atoi(periodEnd)
+	suite.Require().NoError(err)
+	initialPeriodEndTime := time.Unix(0, int64(periodEndInt))
 
-	suite.Require().Equal(used, sdk.NewInt(3750000000000337500))
+	suite.chainA.Coordinator.IncrementTimeBy(time.Second * 604800)
+	fmt.Println("now ", suite.chainA.CurrentHeader.Time)
 
-	//	key := fmt.Sprintf(`'{"get_quotas": {"channel_id": "%s", "denom": "%s"}}'`, channel, denom)
-	key := `{"get_quotas": {}}`
-	fmt.Println("key ", key)
-	cInfo := suite.chainA.GetOsmosisApp().WasmKeeper.GetContractInfo(
-		suite.chainA.GetContext(),
-		addr,
+	fmt.Println("quota ", out)
+	//suite.chainA.Coordinator.IncrementTimeBy(time.Hour * 24 * 8)
+	asJson, err := json.Marshal("rollover_rules")
+	_, err = osmosisApp.WasmKeeper.Sudo(
+		chainCtx,
+		contractAddress,
+		asJson,
 	)
-	fmt.Printf("contract info %+v\n", cInfo)
-	res := suite.chainA.GetOsmosisApp().WasmKeeper.QueryRaw(
-		suite.chainA.GetContext(),
-		addr,
-		[]byte(key),
-	)
-	//suite.Require().NoError(err)
-	fmt.Printf("response %s\n", string(res))
+	suite.Require().NoError(err)
+	res, err = osmosisApp.WasmKeeper.QuerySmart(chainCtx, contractAddress, []byte(key))
+	suite.Require().NoError(err)
+	out = make([]map[string]interface{}, 0)
+	suite.Require().NoError(json.Unmarshal(res, &out))
+	output, ok = out[0]["flow"].(map[string]interface{})
+	suite.Require().True(ok)
+	periodEnd = output["period_end"].(string)
+	periodEndInt, err = strconv.Atoi(periodEnd)
+	suite.Require().NoError(err)
+	currentPeriodEndTime := time.Unix(0, int64(periodEndInt))
+	fmt.Println("then ", currentPeriodEndTime)
+
+	fmt.Println("quota ", out)
+
+	suite.Require().True(currentPeriodEndTime.After(initialPeriodEndTime))
 }
