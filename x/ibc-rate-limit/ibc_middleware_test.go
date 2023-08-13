@@ -540,9 +540,24 @@ func (suite *MiddlewareTestSuite) TestUnsetRateLimitingContract() {
 }
 
 // Test rate limiting on sends
-func (suite *MiddlewareTestSuite) Test_RateLimit_RollOver_Native() {
+func (suite *MiddlewareTestSuite) Test_Query_RateLimit() {
 	// Sends denom=stake from A->B. Rate limit receives "stake" in the packet. Nothing to do in the contract
-	suite.fullSendTest(true)
+	attrs := suite.fullSendTest(false)
+	contractAddress, err := sdk.AccAddressFromBech32(attrs["_contract_address"])
+	suite.Require().NoError(err)
+	denom := attrs["denom"]
+	channel := attrs["channel_id"]
+	key := fmt.Sprintf(`{"get_quotas": {"channel_id": "%s", "denom": "%s"}}`, channel, denom)
+
+	chainCtx := suite.chainA.GetContext()
+	osmosisApp := suite.chainA.GetOsmosisApp()
+	gotContract := osmosisApp.RateLimitingICS4Wrapper.GetContractAddress(chainCtx)
+	suite.Require().Equal(gotContract, attrs["_contract_address"])
+
+	res, err := osmosisApp.WasmKeeper.QuerySmart(chainCtx, contractAddress, []byte(key))
+	suite.Require().NoError(err)
+	suite.Require().NotNil(res)
+
 }
 
 // Test rate limiting on sends
