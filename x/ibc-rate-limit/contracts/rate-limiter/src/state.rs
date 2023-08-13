@@ -232,7 +232,7 @@ pub struct RateLimit {
 // contract. This function takes that into account so that the channel value
 // that we track matches the channel value at the moment when the ibc
 // transaction started executing
-fn calculate_channel_value(
+pub(crate) fn calculate_channel_value(
     channel_value: Uint256,
     denom: &str,
     funds: Uint256,
