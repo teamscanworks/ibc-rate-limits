@@ -610,3 +610,57 @@ fn test_rollover_expired_rate_limits() {
     assert!(monthly_rules_changed.get("monthly").unwrap().flow.period_end > weekly_rules_changed.get("monthly").unwrap().flow.period_end);
 
 }
+
+#[test]
+fn test_decay_two_period() {
+    let mut test_env = new_test_env(&[PathMsg {
+        channel_id: format!("any"),
+        denom: format!("denom"),
+        quotas: vec![
+            QuotaMsg::new("daily", RESET_TIME_DAILY, 1, 1),
+            QuotaMsg::new("weekly", RESET_TIME_WEEKLY, 5, 5),
+            QuotaMsg::new("monthly", RESET_TIME_MONTHLY, 5, 5),
+        ],
+    }]);
+
+    // shorthand for returning all rules
+    fn get_rules(test_env: &TestEnv) -> HashMap<String, RateLimit> {
+        let rules = RATE_LIMIT_TRACKERS.range(&test_env.deps.storage, None, None, cosmwasm_std::Order::Ascending).flatten().collect::<Vec<_>>();
+        let mut indexed_rules: HashMap<String, RateLimit> = HashMap::new();
+        rules.into_iter().for_each(|(_, rules)| {
+            rules.into_iter().for_each(|rule| {indexed_rules.insert(rule.quota.name.clone(), rule);});
+        });
+        indexed_rules
+    }
+
+    let rules = get_rules(&test_env);
+
+    for (k, rate_limit) in rules {
+        println!("key: {k}, rate_limit: {rate_limit:#?}");
+    }
+    /*
+
+    let mut env = mock_env();
+    env.block.height = 12_345;
+    env.block.time = Timestamp::from_seconds(1690757434);
+    let mut rv = RateLimitValue {
+        previous_period_value: 10_000,
+        current_period_value: 5_000,
+        period_start: Timestamp::from_seconds(1690757434),
+        period_end: Timestamp::from_seconds(1690786248),
+        interval_check_height: 12_344,
+        decayed_value: cosmwasm_std::Decimal::raw(0),
+    };
+    let rate = rv.check_decay_rate(env.clone()).unwrap();
+    assert!(rate == cosmwasm_std::Decimal::zero());
+    env.block.height = 12_346;
+    let rate = rv.check_decay_rate(env.clone()).unwrap();
+    assert!(rate == cosmwasm_std::Decimal::zero());
+    env.block.time = Timestamp::from_seconds(1690763805);
+    let rate: u128 = rv.check_decay_rate(env.clone()).unwrap().atomics().into();
+    assert!(rate == 2200000000000000000000);
+    let val: u128 = rv.averaged_value(env.clone(), 8_000).unwrap().atomics().into();
+    assert!(val == 5100000000000000000000);
+*/
+
+}
