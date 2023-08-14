@@ -623,44 +623,70 @@ fn test_decay_two_period() {
         ],
     }]);
 
-    // shorthand for returning all rules
-    fn get_rules(test_env: &TestEnv) -> HashMap<String, RateLimit> {
-        let rules = RATE_LIMIT_TRACKERS.range(&test_env.deps.storage, None, None, cosmwasm_std::Order::Ascending).flatten().collect::<Vec<_>>();
-        let mut indexed_rules: HashMap<String, RateLimit> = HashMap::new();
-        rules.into_iter().for_each(|(_, rules)| {
-            rules.into_iter().for_each(|rule| {indexed_rules.insert(rule.quota.name.clone(), rule);});
-        });
-        indexed_rules
-    }
-
     let rules = get_rules(&test_env);
 
-    for (k, rate_limit) in rules {
+    for (k, mut rate_limit) in rules {
         println!("key: {k}, rate_limit: {rate_limit:#?}");
+        //let res = rate_limit.check_decay_rate(test_env.env.clone()).unwrap();
     }
-    /*
 
-    let mut env = mock_env();
-    env.block.height = 12_345;
-    env.block.time = Timestamp::from_seconds(1690757434);
-    let mut rv = RateLimitValue {
-        previous_period_value: 10_000,
-        current_period_value: 5_000,
-        period_start: Timestamp::from_seconds(1690757434),
-        period_end: Timestamp::from_seconds(1690786248),
-        interval_check_height: 12_344,
-        decayed_value: cosmwasm_std::Decimal::raw(0),
+    let send_msg = test_msg_send!(
+        channel_id: format!("channel"),
+        denom: format!("denom"),
+        channel_value: 3_300_300_u32.into(),
+        funds: 100_u32.into()
+    );
+    sudo(
+        test_env.deps.as_mut(),
+        test_env.env.clone(),
+        send_msg.clone(),
+    )
+    .unwrap();
+
+    let recv_msg = test_msg_recv!(
+        channel_id: format!("channel"),
+        denom: format!("denom"),
+        channel_value: 3_300_300_u32.into(),
+        funds: 30_u32.into()
+    );
+    sudo(
+        test_env.deps.as_mut(),
+        test_env.env.clone(),
+        recv_msg.clone(),
+    )
+    .unwrap();
+
+    let query_msg = QueryMsg::GetQuotas {
+        channel_id: format!("any"),
+        denom: format!("denom"),
     };
-    let rate = rv.check_decay_rate(env.clone()).unwrap();
-    assert!(rate == cosmwasm_std::Decimal::zero());
-    env.block.height = 12_346;
-    let rate = rv.check_decay_rate(env.clone()).unwrap();
-    assert!(rate == cosmwasm_std::Decimal::zero());
-    env.block.time = Timestamp::from_seconds(1690763805);
-    let rate: u128 = rv.check_decay_rate(env.clone()).unwrap().atomics().into();
-    assert!(rate == 2200000000000000000000);
-    let val: u128 = rv.averaged_value(env.clone(), 8_000).unwrap().atomics().into();
-    assert!(val == 5100000000000000000000);
-*/
 
+    let res = query(
+        test_env.deps.as_ref(),
+        test_env.env.clone(),
+        query_msg.clone(),
+    )
+    .unwrap();
+    let value: Vec<RateLimit> = from_binary(&res).unwrap();
+    println!("{value:#?}");
+}
+
+// shorthand for returning all rules
+fn get_rules(test_env: &TestEnv) -> HashMap<String, RateLimit> {
+    let rules = RATE_LIMIT_TRACKERS
+        .range(
+            &test_env.deps.storage,
+            None,
+            None,
+            cosmwasm_std::Order::Ascending,
+        )
+        .flatten()
+        .collect::<Vec<_>>();
+    let mut indexed_rules: HashMap<String, RateLimit> = HashMap::new();
+    rules.into_iter().for_each(|(_, rules)| {
+        rules.into_iter().for_each(|rule| {
+            indexed_rules.insert(rule.quota.name.clone(), rule);
+        });
+    });
+    indexed_rules
 }
