@@ -1,20 +1,22 @@
 #![cfg(test)]
 use std::collections::HashMap;
 
-use crate::helpers::{expired_rate_limits};
-use crate::sudo::rollover_expired_rate_limits;
+use crate::helpers::expired_rate_limits;
 use crate::msg::MigrateMsg;
+use crate::sudo::rollover_expired_rate_limits;
 
-use crate::packet::Packet;
-use crate::{contract::*, test_msg_recv, test_msg_send, ContractError};
-use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MockApi, MockStorage, MockQuerier};
-use cosmwasm_std::{from_binary, Addr, Attribute, Env, Uint256, Querier, OwnedDeps, MemoryStorage};
-use cw_multi_test::{App, AppBuilder, BankKeeper, ContractWrapper, Executor};
-use cosmwasm_std::Timestamp;
 use crate::helpers::tests::verify_query_response;
 use crate::msg::{InstantiateMsg, PathMsg, QueryMsg, QuotaMsg, SudoMsg};
-use crate::state::tests::{RESET_TIME_WEEKLY, RESET_TIME_DAILY, RESET_TIME_MONTHLY};
+use crate::packet::Packet;
+use crate::state::tests::{RESET_TIME_DAILY, RESET_TIME_MONTHLY, RESET_TIME_WEEKLY};
 use crate::state::{RateLimit, GOVMODULE, IBCMODULE, RATE_LIMIT_TRACKERS};
+use crate::{contract::*, test_msg_recv, test_msg_send, ContractError};
+use cosmwasm_std::testing::{
+    mock_dependencies, mock_env, mock_info, MockApi, MockQuerier, MockStorage,
+};
+use cosmwasm_std::Timestamp;
+use cosmwasm_std::{from_binary, Addr, Attribute, Env, MemoryStorage, OwnedDeps, Querier, Uint256};
+use cw_multi_test::{App, AppBuilder, BankKeeper, ContractWrapper, Executor};
 const IBC_ADDR: &str = "IBC_MODULE";
 const GOV_ADDR: &str = "GOV_MODULE";
 
@@ -23,10 +25,9 @@ pub const SECONDS_PER_HOUR: u64 = 3600;
 
 pub(crate) struct TestEnv {
     pub env: Env,
-    pub deps: OwnedDeps<MemoryStorage, MockApi, MockQuerier>
+    pub deps: OwnedDeps<MemoryStorage, MockApi, MockQuerier>,
 }
 fn new_test_env(paths: &[PathMsg]) -> TestEnv {
-
     let mut deps: OwnedDeps<MemoryStorage, MockApi, MockQuerier> = mock_dependencies();
     let env = mock_env();
     let msg = InstantiateMsg {
@@ -37,15 +38,12 @@ fn new_test_env(paths: &[PathMsg]) -> TestEnv {
     let info = mock_info(GOV_ADDR, &vec![]);
     instantiate(deps.as_mut(), env.clone(), info, msg).unwrap();
 
-    TestEnv {
-        deps,
-        env,
-    }
+    TestEnv { deps, env }
 }
 
 impl TestEnv {
     pub fn plus_hours(&mut self, hours: u64) {
-        self.env.block.time = self.env.block.time.plus_seconds( hours * SECONDS_PER_HOUR);
+        self.env.block.time = self.env.block.time.plus_seconds(hours * SECONDS_PER_HOUR);
     }
     pub fn plus_days(&mut self, days: u64) {
         self.env.block.time = self.env.block.time.plus_seconds(days * SECONDS_PER_DAY);
@@ -61,9 +59,12 @@ fn test_basic_migration() {
         quotas: vec![QuotaMsg::new("weekly", RESET_TIME_WEEKLY, 10, 10)],
     }]);
 
-
-
-    for key in RATE_LIMIT_TRACKERS.keys(&test_env.deps.storage, None, None, cosmwasm_std::Order::Ascending) {
+    for key in RATE_LIMIT_TRACKERS.keys(
+        &test_env.deps.storage,
+        None,
+        None,
+        cosmwasm_std::Order::Ascending,
+    ) {
         match key {
             Ok((k, v)) => {
                 println!("got key {}, {}", k, v);
@@ -460,7 +461,6 @@ fn test_tokenfactory_message() {
     //println!("{parsed:?}");
 }
 
-
 #[test]
 fn test_expired_rate_limits() {
     let mut test_env = new_test_env(&[PathMsg {
@@ -503,7 +503,7 @@ fn test_expired_rate_limits() {
     assert_eq!(expired_limits[0].1[1].quota.name, "weekly");
     // advance timestamp by 24 days for a total of 31 days passed
     test_env.plus_days(24);
- 
+
     // daily, weekly, monthly rules should be expired
     let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
     assert_eq!(expired_limits[0].1.len(), 3);
@@ -522,16 +522,6 @@ fn test_rollover_expired_rate_limits() {
             QuotaMsg::new("monthly", RESET_TIME_MONTHLY, 5, 5),
         ],
     }]);
-
-    // shorthand for returning all rules
-    fn get_rules(test_env: &TestEnv) -> HashMap<String, RateLimit> {
-        let rules = RATE_LIMIT_TRACKERS.range(&test_env.deps.storage, None, None, cosmwasm_std::Order::Ascending).flatten().collect::<Vec<_>>();
-        let mut indexed_rules: HashMap<String, RateLimit> = HashMap::new();
-        rules.into_iter().for_each(|(_, rules)| {
-            rules.into_iter().for_each(|rule| {indexed_rules.insert(rule.quota.name.clone(), rule);});
-        });
-        indexed_rules
-    }
 
     // store a copy of the unchanged rules
     let original_rules = get_rules(&test_env);
@@ -558,10 +548,19 @@ fn test_rollover_expired_rate_limits() {
     // store a copy of rules after the daily limit has changed
     let daily_rules_changed = get_rules(&test_env);
     // ensure the daily period is different
-    assert!(daily_rules_changed.get("daily").unwrap().flow.period_end > original_rules.get("daily").unwrap().flow.period_end);
+    assert!(
+        daily_rules_changed.get("daily").unwrap().flow.period_end
+            > original_rules.get("daily").unwrap().flow.period_end
+    );
     // ensure weekly and monthly rules are the same
-    assert!(daily_rules_changed.get("weekly").unwrap().flow.period_end == original_rules.get("weekly").unwrap().flow.period_end);
-    assert!(daily_rules_changed.get("monthly").unwrap().flow.period_end == original_rules.get("monthly").unwrap().flow.period_end);
+    assert!(
+        daily_rules_changed.get("weekly").unwrap().flow.period_end
+            == original_rules.get("weekly").unwrap().flow.period_end
+    );
+    assert!(
+        daily_rules_changed.get("monthly").unwrap().flow.period_end
+            == original_rules.get("monthly").unwrap().flow.period_end
+    );
 
     // advance timestamp by half day, no rules should be changed
     test_env.plus_hours(12);
@@ -578,10 +577,19 @@ fn test_rollover_expired_rate_limits() {
 
     let daily_rules_changed2 = get_rules(&test_env);
     // ensure the daily period is different
-    assert!(daily_rules_changed2.get("daily").unwrap().flow.period_end > daily_rules_changed.get("daily").unwrap().flow.period_end);
+    assert!(
+        daily_rules_changed2.get("daily").unwrap().flow.period_end
+            > daily_rules_changed.get("daily").unwrap().flow.period_end
+    );
     // ensure weekly and monthly rules are the same
-    assert!(daily_rules_changed2.get("weekly").unwrap().flow.period_end == original_rules.get("weekly").unwrap().flow.period_end);
-    assert!(daily_rules_changed2.get("monthly").unwrap().flow.period_end == original_rules.get("monthly").unwrap().flow.period_end);
+    assert!(
+        daily_rules_changed2.get("weekly").unwrap().flow.period_end
+            == original_rules.get("weekly").unwrap().flow.period_end
+    );
+    assert!(
+        daily_rules_changed2.get("monthly").unwrap().flow.period_end
+            == original_rules.get("monthly").unwrap().flow.period_end
+    );
 
     // advance timestamp by 6 days
     test_env.plus_days(6);
@@ -591,11 +599,20 @@ fn test_rollover_expired_rate_limits() {
 
     let weekly_rules_changed = get_rules(&test_env);
     // ensure the daily period is different
-    assert!(weekly_rules_changed.get("daily").unwrap().flow.period_end > daily_rules_changed2.get("daily").unwrap().flow.period_end);
+    assert!(
+        weekly_rules_changed.get("daily").unwrap().flow.period_end
+            > daily_rules_changed2.get("daily").unwrap().flow.period_end
+    );
     // ensure weekly is different
-    assert!(weekly_rules_changed.get("weekly").unwrap().flow.period_end > daily_rules_changed2.get("weekly").unwrap().flow.period_end);
+    assert!(
+        weekly_rules_changed.get("weekly").unwrap().flow.period_end
+            > daily_rules_changed2.get("weekly").unwrap().flow.period_end
+    );
     // ensure monthly is unchanged
-    assert!(weekly_rules_changed.get("monthly").unwrap().flow.period_end == original_rules.get("monthly").unwrap().flow.period_end);
+    assert!(
+        weekly_rules_changed.get("monthly").unwrap().flow.period_end
+            == original_rules.get("monthly").unwrap().flow.period_end
+    );
 
     // advance timestamp by 24 days
     test_env.plus_days(24);
@@ -605,10 +622,22 @@ fn test_rollover_expired_rate_limits() {
 
     let monthly_rules_changed = get_rules(&test_env);
     // ensure all three periods have reset
-    assert!(monthly_rules_changed.get("daily").unwrap().flow.period_end > weekly_rules_changed.get("daily").unwrap().flow.period_end);
-    assert!(monthly_rules_changed.get("weekly").unwrap().flow.period_end > weekly_rules_changed.get("weekly").unwrap().flow.period_end);
-    assert!(monthly_rules_changed.get("monthly").unwrap().flow.period_end > weekly_rules_changed.get("monthly").unwrap().flow.period_end);
-
+    assert!(
+        monthly_rules_changed.get("daily").unwrap().flow.period_end
+            > weekly_rules_changed.get("daily").unwrap().flow.period_end
+    );
+    assert!(
+        monthly_rules_changed.get("weekly").unwrap().flow.period_end
+            > weekly_rules_changed.get("weekly").unwrap().flow.period_end
+    );
+    assert!(
+        monthly_rules_changed
+            .get("monthly")
+            .unwrap()
+            .flow
+            .period_end
+            > weekly_rules_changed.get("monthly").unwrap().flow.period_end
+    );
 }
 
 #[test]
