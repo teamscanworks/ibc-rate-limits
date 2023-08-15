@@ -280,7 +280,10 @@ impl RateLimit {
 
         let expired = self.flow.apply_transfer(direction, funds, now, &self.quota);
         // Cache the channel value if it has never been set or it has expired.
-        if self.quota.channel_value.is_none() || expired {
+        //
+        // NOTE: due to the way rollover is currently working, this
+        // may be None / expired for backwards compatability, or it may be Some(0)
+        if self.quota.channel_value.unwrap_or(Uint256::zero()).is_zero() || expired {
             self.quota.channel_value = Some(calculate_channel_value(
                 channel_value,
                 &path.denom,
@@ -311,23 +314,44 @@ impl RateLimit {
             }),
         }
     }
+    // executes business logic to handle period changes
+    pub fn handle_rollover(&mut self, env: cosmwasm_std::Env) {
+        self.flow.expire(env.block.time, self.quota.duration);
+        self.period_start = Some(env.block.time.clone());
+        self.previous_channel_value = self.quota.channel_value.clone();
+    }
+    // returns current channel value averaged against the previous channel value using a decaying function
+    pub fn averaged_channel_value(&self) -> Option<cosmwasm_std::Decimal256> {
+        // when a rule is first initialized there is no previous period value, so there is nothing to average
+        if self.previous_channel_value.unwrap_or(Uint256::zero()).is_zero() {
+            return Some(cosmwasm_std::Decimal256::new(self.quota.channel_value?));
+        }
+        let decayed_channel_value = cosmwasm_std::Decimal256::new(self.previous_channel_value?).checked_sub(self.decayed_value?).ok()?;
+        Some((cosmwasm_std::Decimal256::new(self.quota.channel_value?) + decayed_channel_value) / cosmwasm_std::Decimal256::from_atomics(2_u64, 0).ok()?)
+
+    }
     // returns the amount of time that has passed in the given time period, based on the current timestamp recorded in the block
     // this transaction is executing in
     pub fn period_percent_passed(&self, block_time_second: u64) -> Option<cosmwasm_std::Decimal256> {
         // todo: measure the gas costs of calling `self.period_start.seconds()` twice vs storing the result of the function call in memory as is done now
         let period_start_seconds = self.period_start?.seconds();
-        let period_end_seconds = self.flow.period_end.seconds();
-        return Some(cosmwasm_std::Decimal256::percent(((block_time_second - period_start_seconds) * 100) / (period_end_seconds - period_start_seconds)));
+        return Some(cosmwasm_std::Decimal256::percent(((block_time_second - period_start_seconds) * 100) / (self.flow.period_end.seconds() - period_start_seconds)));
+
+        //return Some(cosmwasm_std::Decimal256::percent(((block_time_second - period_start_seconds) * 100) / (period_end_seconds - period_start_seconds)));
     }
+    // used to perform a decay value update when needed, returning the newly decayed value if updated, otherwise
+    // returning hte existing decayed value.
+    //
+    // the decayed value is subtracted from the previous channel value, as the decayed value represents the amou
     // checks if a decay operation should be applied to the value from the previous time period
     // returning the existing decayed value if there is no difference in block height or timestamp
     pub fn check_decay_rate(&mut self, env: cosmwasm_std::Env) -> Option<cosmwasm_std::Decimal256> {
-        #[cfg(test)]
-        println!("self {self:#?}");
+        //#[cfg(test)]
+        //println!("self {self:#?}");
 
         if self.decayed_last_updated? == env.block.height {
-            #[cfg(test)]
-            println!("decayed_last_updated(stale: false)");
+          #[cfg(test)]
+          println!("decayed_last_updated(stale: false)");
 
             return self.decayed_value;
         }
@@ -353,7 +377,9 @@ impl RateLimit {
         println!("checking period passed");
 
         let percent_passed = self.period_percent_passed(env.block.time.seconds())?;
-        self.decayed_value = Some(cosmwasm_std::Decimal256::new(self.previous_channel_value?) * percent_passed);
+        let previous_channel_value = cosmwasm_std::Decimal256::new(self.previous_channel_value?);
+        let decayed_amount =  previous_channel_value * percent_passed;
+        self.decayed_value = Some(previous_channel_value - decayed_amount);
         return self.decayed_value;
     }
 }

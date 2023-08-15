@@ -201,9 +201,7 @@ pub fn rollover_expired_rate_limits(deps: DepsMut, env: Env) -> Result<(), Contr
         let mut rule_updated = false;
         rules.iter_mut().for_each(|rule| {
             if rule.flow.is_expired(env.block.time) {
-                rule.flow.expire(env.block.time, rule.quota.duration);
-                // is this the correct way to reset the channel value??
-                rule.quota.channel_value = Some(Uint256::zero());
+                rule.handle_rollover(env.clone());
                 rule_updated = true;
             }
         });
