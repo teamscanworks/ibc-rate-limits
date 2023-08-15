@@ -652,12 +652,12 @@ fn test_decay_two_period() {
         ],
     }]);
 
-    let rules = get_rules(&test_env);
+    let _ = get_rules(&test_env);
 
-    for (k, mut rate_limit) in rules {
-        println!("key: {k}, rate_limit: {rate_limit:#?}");
-        //let res = rate_limit.check_decay_rate(test_env.env.clone()).unwrap();
-    }
+    //for (k, mut rate_limit) in rules {
+    //    println!("key: {k}, rate_limit: {rate_limit:#?}");
+    //    //let res = rate_limit.check_decay_rate(test_env.env.clone()).unwrap();
+    //}
 
     let send_msg = test_msg_send!(
         channel_id: format!("channel"),
@@ -696,8 +696,11 @@ fn test_decay_two_period() {
         query_msg.clone(),
     )
     .unwrap();
-    let value: Vec<RateLimit> = from_binary(&res).unwrap();
-    println!("{value:#?}");
+    let rate_limits: Vec<RateLimit> = from_binary(&res).unwrap();
+    for mut rate_limit in rate_limits {
+        let decay_rate = rate_limit.check_decay_rate(test_env.env.clone()).unwrap();
+        println!("decay_rate {decay_rate:#?}");
+    }
 }
 
 // shorthand for returning all rules
