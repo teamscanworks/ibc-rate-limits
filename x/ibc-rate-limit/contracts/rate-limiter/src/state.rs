@@ -304,9 +304,9 @@ impl RateLimit {
             false => Ok(RateLimit {
                 quota: self.quota.clone(), // Cloning here because self.quota.name (String) does not allow us to implement Copy
                 flow: self.flow, // We can Copy flow, so this is slightly more efficient than cloning the whole RateLimit
-                previous_channel_value: None,
-                decayed_last_updated: None,
-                decayed_value: None,
+                previous_channel_value: self.previous_channel_value,
+                decayed_last_updated: self.decayed_last_updated,
+                decayed_value: self.decayed_value,
                 period_start: Some(now),
             }),
         }
