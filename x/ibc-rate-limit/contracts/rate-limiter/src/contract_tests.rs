@@ -782,21 +782,40 @@ fn test_decay_two_period() {
             println!("current_period_end {}", current_period_end);
             assert!(previous_period_end < current_period_end);
         } else if rate_limit.quota.name.eq("monthly") {
+            let rate = rate_limit.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::new(Uint256::from_u128(3300300)));
+            env.plus_hours((31 * 24)+1);
 
+            let previous_period_end = rate_limit.flow.period_end;
+
+            rollover_expired_rate_limits(env.deps.as_mut(), env.env.clone()).unwrap();
+
+            let mut rules2 = get_rules(&env);
+            let rate_limit2 = rules2.get_mut(&key).unwrap();
+
+            // zero because decayed_value not updated, and block time
+            // is equal to the last time a rollover was performed
+            // therefore no rule updates
+            let rate = rate_limit2.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::zero());
+
+            env.plus_hours(24);
+
+            let rate = rate_limit2.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::new(Uint256::from_u128(3201291)));
+
+            env.plus_hours(12);
+
+            let rate = rate_limit2.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::new(Uint256::from_u128(3135285)));
+
+
+            let current_period_end = rate_limit2.flow.period_end;
+            println!("current_period_end {}", current_period_end);
+            assert!(previous_period_end < current_period_end);
         } else {
             panic!("unxpected rate_limit quota name");
         }
-       // //env.block.height = 12_346;
-       // let rate = rate_limit.check_decay_rate(test_env.env.clone()).unwrap();
-       // assert_eq!(rate, cosmwasm_std::Decimal256::zero());
-       // //env.block.time = Timestamp::from_seconds(1690763805);
-       // let rate = rate_limit.check_decay_rate(test_env.env.clone()).unwrap();
-       // let rate: u128 = cosmwasm_std::Decimal::from_str(&rate.to_string()).unwrap().atomics().into();
-       // assert_eq!(rate, 2200000000000000000000);
-       // let val: u128 =cosmwasm_std::Decimal::from_str(&rate_limit.averaged_value(test_env.env.clone(), 8_000).unwrap().to_string()).unwrap().atomics().into();
-       // assert_eq!(val, 5100000000000000000000);
-       // let decay_rate = rate_limit.check_decay_rate(test_env.env.clone()).unwrap();
-       // println!("decay_rate {decay_rate:#?}");
     }
 }
 
