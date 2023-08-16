@@ -31,7 +31,7 @@ pub fn process_packet(
         None => packet.channel_value(deps.as_ref(), &direction)?, // This should almost never be used, but left for completeness in case we want to send an empty channel_value from the test
     };
 
-    #[cfg(not(test))]
+    //#[cfg(not(test))]
     let channel_value = packet.channel_value(deps.as_ref(), &direction)?;
 
     try_transfer(deps, path, channel_value, funds, direction, now)
@@ -107,8 +107,8 @@ pub fn try_transfer(
 
 // #[cfg(any(feature = "verbose_responses", test))]
 fn add_rate_limit_attributes(response: Response, result: &RateLimit) -> Response {
-    let (used_in, used_out) = result.flow.balance();
-    let (max_in, max_out) = result.quota.capacity();
+    let (used_in, used_out) = result.averaged_balance().unwrap();
+    let (max_in, max_out) = result.averaged_capacity().unwrap();
     // These attributes are only added during testing. That way we avoid
     // calculating these again on prod.
     response
