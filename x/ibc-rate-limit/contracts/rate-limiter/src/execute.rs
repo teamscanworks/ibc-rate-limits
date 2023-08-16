@@ -24,6 +24,10 @@ pub fn add_new_paths(
                     previous_channel_value: Some(Uint256::zero()),
                     decayed_value: Some(cosmwasm_std::Decimal256::zero()),
                     period_start: Some(now),
+                    previous_inflow: Some(Uint256::zero()),
+                    previous_outflow: Some(Uint256::zero()),
+                    decayed_infow: Some(cosmwasm_std::Decimal256::zero()),
+                    decayed_outflow: Some(cosmwasm_std::Decimal256::zero()),
                 })
                 .collect(),
         )?
@@ -97,11 +101,11 @@ pub fn try_reset_path_quota(
             }),
             Some(mut limits) => {
                 // Q: What happens here if quote_id not found? seems like we return ok?
-                limits.iter_mut().for_each(|limit| {
-                    if limit.quota.name == quota_id.as_ref() {
-                        limit.flow.expire(now, limit.quota.duration)
-                    }
-                });
+                //limis.iter_mut().for_each(|limit| {
+                //    if limit.quota.name == quota_id.as_ref() {
+                //        limit.flow.expire(now, limit.quota.duration)
+                //    }
+                //});
                 Ok(limits)
             }
         }

@@ -150,14 +150,14 @@ impl Flow {
         funds: Uint256,
         now: Timestamp,
         quota: &Quota,
-    ) -> bool {
-        let mut expired = false;
-        if self.is_expired(now) {
-            self.expire(now, quota.duration);
-            expired = true;
-        }
+    ) {
+        //let mut expired = false;
+        //if self.is_expired(now) {
+        //    self.expire(now, quota.duration);
+        //    expired = true;
+        //}
         self.add_flow(direction.clone(), funds);
-        expired
+        //expired
     }
 }
 
@@ -287,12 +287,12 @@ impl RateLimit {
         // Apply the transfer. From here on, we will updated the flow with the new transfer
         // and check if  it exceeds the quota at the current time
 
-        let expired = self.flow.apply_transfer(direction, funds, now, &self.quota);
+        self.flow.apply_transfer(direction, funds, now, &self.quota);
         // Cache the channel value if it has never been set or it has expired.
         //
         // NOTE: due to the way rollover is currently working, this
         // may be None / expired for backwards compatability, or it may be Some(0)
-        if self.quota.channel_value.unwrap_or(Uint256::zero()).is_zero() || expired {
+        if self.quota.channel_value.unwrap_or(Uint256::zero()).is_zero() {
             self.quota.channel_value = Some(calculate_channel_value(
                 channel_value,
                 &path.denom,
@@ -498,16 +498,16 @@ pub mod tests {
         assert!(!flow.is_expired(epoch.plus_seconds(RESET_TIME_WEEKLY)));
         assert!(flow.is_expired(epoch.plus_seconds(RESET_TIME_WEEKLY).plus_nanos(1)));
 
-        assert_eq!(flow.balance(), (0_u32.into(), 0_u32.into()));
+        assert_eq!(flow._balance(), (0_u32.into(), 0_u32.into()));
         flow.add_flow(FlowType::In, 5_u32.into());
-        assert_eq!(flow.balance(), (5_u32.into(), 0_u32.into()));
+        assert_eq!(flow._balance(), (5_u32.into(), 0_u32.into()));
         flow.add_flow(FlowType::Out, 2_u32.into());
-        assert_eq!(flow.balance(), (3_u32.into(), 0_u32.into()));
+        assert_eq!(flow._balance(), (3_u32.into(), 0_u32.into()));
         // Adding flow doesn't affect expiration
         assert!(!flow.is_expired(epoch.plus_seconds(RESET_TIME_DAILY)));
 
-        flow.expire(epoch.plus_seconds(RESET_TIME_WEEKLY), RESET_TIME_WEEKLY);
-        assert_eq!(flow.balance(), (0_u32.into(), 0_u32.into()));
+        flow._expire(epoch.plus_seconds(RESET_TIME_WEEKLY), RESET_TIME_WEEKLY);
+        assert_eq!(flow._balance(), (0_u32.into(), 0_u32.into()));
         assert_eq!(flow.inflow, Uint256::from(0_u32));
         assert_eq!(flow.outflow, Uint256::from(0_u32));
         assert_eq!(flow.period_end, epoch.plus_seconds(RESET_TIME_WEEKLY * 2));
