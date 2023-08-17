@@ -99,6 +99,9 @@ pub enum SudoMsg {
     UndoSend {
         packet: Packet,
     },
+    AutomaticRateLimit {
+        packet: Packet,
+    }
 }
 
 #[cw_serde]

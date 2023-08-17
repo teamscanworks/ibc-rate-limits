@@ -90,6 +90,7 @@ pub fn sudo(deps: DepsMut, env: Env, msg: SudoMsg) -> Result<Response, ContractE
             channel_value_mock,
         ),
         SudoMsg::UndoSend { packet } => sudo::undo_send(deps, packet),
+        SudoMsg::AutomaticRateLimit { packet } => sudo::automatic_rate_limit_creation(deps, env, packet),
     }
 }
 
