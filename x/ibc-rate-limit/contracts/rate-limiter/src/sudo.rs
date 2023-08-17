@@ -107,8 +107,10 @@ pub fn try_transfer(
 
 // #[cfg(any(feature = "verbose_responses", test))]
 fn add_rate_limit_attributes(response: Response, result: &RateLimit) -> Response {
-    let (used_in, used_out) = result.flow.balance();
-    let (max_in, max_out) = result.quota.capacity();
+    //let (used_in, used_out) = result.averaged_balance().unwrap();
+    //let (max_in, max_out) = result.averaged_capacity().unwrap();
+    let (used_in, used_out) = result.flow._balance();
+    let (max_in, max_out) = result.quota._capacity();
     // These attributes are only added during testing. That way we avoid
     // calculating these again on prod.
     response
