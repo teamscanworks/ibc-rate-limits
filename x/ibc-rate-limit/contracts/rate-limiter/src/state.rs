@@ -150,7 +150,11 @@ impl Flow {
         funds: Uint256,
         now: Timestamp,
         quota: &Quota,
+        v1_migrated: bool
     ) {
+        if v1_migrated && self.is_expired(now) {
+            self._expire(now, quota.duration);
+        }
         //let mut expired = false;
         //if self.is_expired(now) {
         //    self.expire(now, quota.duration);
@@ -238,6 +242,10 @@ pub struct RateLimit {
     pub decayed_infow: Option<cosmwasm_std::Decimal256>,
     pub decayed_outflow: Option<cosmwasm_std::Decimal256>,
     pub period_start: Option<Timestamp>,
+    // when set to true, enables averaged_X calculations, this is done
+    // to preserve backwards compatability with pre-existing rate limits
+    // and behavior expectations
+    pub v1_migration: Option<bool>,
 }
 
 // The channel value on send depends on the amount on escrow. The ibc transfer
@@ -287,7 +295,7 @@ impl RateLimit {
         // Apply the transfer. From here on, we will updated the flow with the new transfer
         // and check if  it exceeds the quota at the current time
 
-        self.flow.apply_transfer(direction, funds, now, &self.quota);
+        self.flow.apply_transfer(direction, funds, now, &self.quota, self.v1_migration.unwrap_or(false));
         // Cache the channel value if it has never been set or it has expired.
         //
         // NOTE: due to the way rollover is currently working, this
@@ -324,8 +332,12 @@ impl RateLimit {
                 period_start: Some(now),
                 previous_inflow: self.previous_inflow,
                 previous_outflow: self.previous_outflow,
+                v1_migration: self.v1_migration,
             }),
         }
+    }
+    pub fn is_v1_migrated(&self) -> bool {
+        self.v1_migration.unwrap_or(false)
     }
     // executes business logic to handle period changes
     pub fn handle_rollover(&mut self, env: cosmwasm_std::Env) {
@@ -337,6 +349,9 @@ impl RateLimit {
     }
     // returns current channel value averaged against the previous channel value using a decaying function
     pub fn averaged_channel_value(&self) -> Option<cosmwasm_std::Decimal256> {
+        if !self.is_v1_migrated() {
+            return Some(cosmwasm_std::Decimal256::new(self.quota.channel_value?));
+        }
         // when a rule is first initialized there is no previous period value, so there is nothing to average
         if self.previous_channel_value.unwrap_or(Uint256::zero()).is_zero() {
             return Some(cosmwasm_std::Decimal256::new(self.quota.channel_value?));
@@ -347,6 +362,9 @@ impl RateLimit {
     }
     // like Quota::capacity but using decaying average
     pub fn averaged_capacity(&self) -> Option<(Uint256, Uint256)> {
+        if !self.is_v1_migrated() {
+            return Some(self.quota._capacity());
+        }
         let averaged_channel_value = self.averaged_channel_value()?;
         let averaged_channel_value: Uint256 = averaged_channel_value.atomics();
         Some((
@@ -356,6 +374,9 @@ impl RateLimit {
     }
     // like Quota::_capacity_on but using decaying average
     pub fn averaged_capacity_on(&self, direction: &FlowType) -> Option<Uint256> {
+        if !self.is_v1_migrated() {
+            return Some(self.quota._capacity_on(direction));
+        }
         let (max_in, max_out) = self.averaged_capacity()?;
         match direction {
             FlowType::In => Some(max_in),
@@ -364,6 +385,9 @@ impl RateLimit {
     }
     // like Flow::_balance but using decaying average
     pub fn averaged_balance(&self) -> Option<(Uint256, Uint256)> {
+        if !self.is_v1_migrated() {
+            return Some(self.flow._balance());
+        }
         let decayed_inflow = self.decayed_infow.unwrap_or(cosmwasm_std::Decimal256::zero());
         let decayed_outflow = self.decayed_outflow.unwrap_or(cosmwasm_std::Decimal256::zero());
 
@@ -379,6 +403,9 @@ impl RateLimit {
         ))
     }
     pub fn averaged_balance_on(&self, direction: &FlowType) -> Option<Uint256> {
+        if !self.is_v1_migrated() {
+            return Some(self.flow._balance_on(direction));
+        }
         let (balance_in, balance_out) = if let Some((b_in, b_out)) = self.averaged_balance() {
             (b_in, b_out)
         } else {
@@ -390,6 +417,9 @@ impl RateLimit {
         }
     }
     pub fn averaged_exceeds(&self, direction: &FlowType, max_inflow: Uint256, max_outflow: Uint256) -> bool {
+        if !self.is_v1_migrated() {
+            return self.flow._exceeds(direction, max_inflow, max_outflow);
+        }
         let (balance_in, balance_out) = if let Some((b_in, b_out)) = self.averaged_balance() {
             (b_in, b_out)
         } else {

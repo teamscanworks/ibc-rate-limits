@@ -28,6 +28,7 @@ pub fn add_new_paths(
                     previous_outflow: Some(Uint256::zero()),
                     decayed_infow: Some(cosmwasm_std::Decimal256::zero()),
                     decayed_outflow: Some(cosmwasm_std::Decimal256::zero()),
+                    v1_migration: Some(true), // all new rules trigger v1_migration behavior
                 })
                 .collect(),
         )?

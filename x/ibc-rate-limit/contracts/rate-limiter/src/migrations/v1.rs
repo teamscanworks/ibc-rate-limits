@@ -1,7 +1,7 @@
 use cosmwasm_std::{DepsMut, Env, Event, Response, StdError};
 use cw2::{get_contract_version, set_contract_version, ContractVersion};
 
-use crate::{contract::CONTRACT_NAME, msg::MigrateMsg, ContractError};
+use crate::{contract::CONTRACT_NAME, msg::MigrateMsg, ContractError, state::RATE_LIMIT_TRACKERS};
 
 pub(crate) fn v1_migrate(
     stored_version: semver::Version,
@@ -10,6 +10,12 @@ pub(crate) fn v1_migrate(
     env: Env,
     msg: MigrateMsg,
 ) -> Result<Response, ContractError> {
+    for (key, mut rules) in RATE_LIMIT_TRACKERS.range(deps.storage, None, None, cosmwasm_std::Order::Ascending).flatten().collect::<Vec<_>>() {
+        rules.iter_mut().for_each(|rule| {
+            rule.v1_migration = Some(true);
+        });
+        RATE_LIMIT_TRACKERS.save(deps.storage, key, &rules)?;
+    }
     Ok(Response::default().add_event(
         Event::new("migration_ok")
             .add_attribute("migration_version", "v1")
