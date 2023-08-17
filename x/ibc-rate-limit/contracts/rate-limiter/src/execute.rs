@@ -28,7 +28,7 @@ pub fn add_new_paths(
                     previous_outflow: Some(Uint256::zero()),
                     decayed_infow: Some(cosmwasm_std::Decimal256::zero()),
                     decayed_outflow: Some(cosmwasm_std::Decimal256::zero()),
-                    v1_migration: Some(true), // all new rules trigger v1_migration behavior
+                    v1_migration: Some(false), // todo: handle setting this for new rules created after migration
                 })
                 .collect(),
         )?
@@ -102,11 +102,14 @@ pub fn try_reset_path_quota(
             }),
             Some(mut limits) => {
                 // Q: What happens here if quote_id not found? seems like we return ok?
-                //limis.iter_mut().for_each(|limit| {
-                //    if limit.quota.name == quota_id.as_ref() {
-                //        limit.flow.expire(now, limit.quota.duration)
-                //    }
-                //});
+                limits.iter_mut().for_each(|limit| {
+                    if !limit.is_v1_migrated() {
+                        if limit.quota.name == quota_id.as_ref() {
+                            limit.flow._expire(now, limit.quota.duration)
+                        }
+                    }
+
+                });
                 Ok(limits)
             }
         }

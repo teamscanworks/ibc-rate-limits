@@ -151,9 +151,11 @@ impl Flow {
         now: Timestamp,
         quota: &Quota,
         v1_migrated: bool
-    ) {
+    ) -> bool {
+        let mut expired = false;
         if v1_migrated && self.is_expired(now) {
             self._expire(now, quota.duration);
+            expired = true;
         }
         //let mut expired = false;
         //if self.is_expired(now) {
@@ -161,7 +163,7 @@ impl Flow {
         //    expired = true;
         //}
         self.add_flow(direction.clone(), funds);
-        //expired
+        expired
     }
 }
 
@@ -295,12 +297,12 @@ impl RateLimit {
         // Apply the transfer. From here on, we will updated the flow with the new transfer
         // and check if  it exceeds the quota at the current time
 
-        self.flow.apply_transfer(direction, funds, now, &self.quota, self.v1_migration.unwrap_or(false));
+        let expired = self.flow.apply_transfer(direction, funds, now, &self.quota, self.v1_migration.unwrap_or(false));
         // Cache the channel value if it has never been set or it has expired.
         //
         // NOTE: due to the way rollover is currently working, this
         // may be None / expired for backwards compatability, or it may be Some(0)
-        if self.quota.channel_value.unwrap_or(Uint256::zero()).is_zero() {
+        if self.quota.channel_value.unwrap_or(Uint256::zero()).is_zero() || expired {
             self.quota.channel_value = Some(calculate_channel_value(
                 channel_value,
                 &path.denom,

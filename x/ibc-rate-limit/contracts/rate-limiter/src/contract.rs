@@ -73,6 +73,7 @@ pub fn execute(
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn sudo(deps: DepsMut, env: Env, msg: SudoMsg) -> Result<Response, ContractError> {
+    println!("foobar");
     match msg {
         SudoMsg::SendPacket {
             packet,

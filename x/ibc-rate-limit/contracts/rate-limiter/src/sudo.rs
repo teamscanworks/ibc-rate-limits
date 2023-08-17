@@ -142,21 +142,23 @@ fn add_rate_limit_attributes(response: Response, result: &RateLimit) -> Response
 // This function manually injects an inflow. This is used when reverting a
 // packet that failed ack or timed-out.
 pub fn undo_send(deps: DepsMut, packet: Packet) -> Result<Response, ContractError> {
+    println!("peepoopoo");
     // Sudo call. Only go modules should be allowed to access this
     let (channel_id, denom) = packet.path_data(&FlowType::Out); // Sends have direction out.
     let path = &Path::new(channel_id, &denom);
     let any_path = Path::new("any", &denom);
     let funds = packet.get_funds();
-
+    println!("1");
     let mut any_trackers = RATE_LIMIT_TRACKERS
         .may_load(deps.storage, any_path.clone().into())?
         .unwrap_or_default();
+    println!("2");
     let mut trackers = RATE_LIMIT_TRACKERS
         .may_load(deps.storage, path.into())?
         .unwrap_or_default();
-
+    println!("3");
     let not_configured = trackers.is_empty() && any_trackers.is_empty();
-
+    println!("4");
     if not_configured {
         // No Quota configured for the current path. Allowing all messages.
         return Ok(Response::new()
@@ -165,7 +167,7 @@ pub fn undo_send(deps: DepsMut, packet: Packet) -> Result<Response, ContractErro
             .add_attribute("denom", path.denom.to_string())
             .add_attribute("quota", "none"));
     }
-
+    println!("5");
     // We force update the flow to remove a failed send
     let results: Vec<RateLimit> = trackers
         .iter_mut()
@@ -174,6 +176,7 @@ pub fn undo_send(deps: DepsMut, packet: Packet) -> Result<Response, ContractErro
             limit.to_owned()
         })
         .collect();
+    println!("6");
     let any_results: Vec<RateLimit> = any_trackers
         .iter_mut()
         .map(|limit| {
@@ -181,10 +184,11 @@ pub fn undo_send(deps: DepsMut, packet: Packet) -> Result<Response, ContractErro
             limit.to_owned()
         })
         .collect();
-
+    println!("7");
     RATE_LIMIT_TRACKERS.save(deps.storage, path.into(), &results)?;
+    println!("8");
     RATE_LIMIT_TRACKERS.save(deps.storage, any_path.into(), &any_results)?;
-
+    println!("9");
     Ok(Response::new()
         .add_attribute("method", "undo_send")
         .add_attribute("channel_id", path.channel.to_string())
