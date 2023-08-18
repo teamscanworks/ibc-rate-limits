@@ -6,6 +6,7 @@ mod error;
 pub mod msg;
 mod state;
 
+mod migrations;
 pub mod packet;
 
 // Functions
@@ -14,8 +15,10 @@ mod query;
 mod sudo;
 
 // Tests
-mod contract_tests;
-mod helpers;
+#[cfg(test)]
+pub mod contract_tests;
+
+pub(crate) mod helpers;
 mod integration_tests;
 
 pub use crate::error::ContractError;

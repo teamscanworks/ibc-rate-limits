@@ -1,7 +1,7 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
-use cw2::set_contract_version;
+use cosmwasm_std::{Binary, Deps, DepsMut, Env, Event, MessageInfo, Response, StdError, StdResult};
+use cw2::{get_contract_version, set_contract_version, ContractVersion};
 
 use crate::error::ContractError;
 use crate::msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg, SudoMsg};
@@ -9,8 +9,11 @@ use crate::state::{FlowType, GOVMODULE, IBCMODULE};
 use crate::{execute, query, sudo};
 
 // version info for migration info
-const CONTRACT_NAME: &str = "crates.io:rate-limiter";
-const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const CONTRACT_NAME: &str = "crates.io:rate-limiter";
+
+pub(crate) const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -19,7 +22,13 @@ pub fn instantiate(
     _info: MessageInfo,
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
+    // for testing purposes always set version to 0.1.0
+    #[cfg(test)]
+    set_contract_version(deps.storage, CONTRACT_NAME, "0.1.0")?;
+
+    #[cfg(not(test))]
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+
     IBCMODULE.save(deps.storage, &msg.ibc_module)?;
     GOVMODULE.save(deps.storage, &msg.gov_module)?;
 
@@ -90,6 +99,10 @@ pub fn sudo(deps: DepsMut, env: Env, msg: SudoMsg) -> Result<Response, ContractE
             channel_value_mock,
         ),
         SudoMsg::UndoSend { packet } => sudo::undo_send(deps, packet),
+        SudoMsg::RolloverRules => {
+            crate::sudo::rollover_expired_rate_limits(deps, env)?;
+            Ok(Response::default())
+        },
     }
 }
 
@@ -101,6 +114,6 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
-    unimplemented!()
+pub fn migrate(deps: DepsMut, env: Env, msg: MigrateMsg) -> Result<Response, ContractError> {
+    crate::migrations::migrate_internal(deps, env, msg)
 }

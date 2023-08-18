@@ -1,4 +1,8 @@
 #![cfg(test)]
+use cosmwasm_std::Deps;
+use cosmwasm_std::DepsMut;
+use cosmwasm_std::Env;
+use cosmwasm_std::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -6,6 +10,9 @@ use cosmwasm_std::{to_binary, Addr, CosmosMsg, StdResult, WasmMsg};
 
 use crate::msg::ExecuteMsg;
 use crate::msg::SudoMsg;
+use crate::state::RateLimit;
+use crate::state::RATE_LIMIT_TRACKERS;
+use crate::ContractError;
 
 /// CwTemplateContract is a wrapper around Addr that provides a lot of helpers
 /// for working with this.
@@ -34,6 +41,27 @@ impl RateLimitingContract {
             msg,
         })
     }
+}
+
+/// returns all rate limits that have expired and can be rolled over
+pub fn expired_rate_limits(deps: Deps, time: Timestamp) -> Vec<((String, String), Vec<RateLimit>)> {
+    RATE_LIMIT_TRACKERS
+        .range(deps.storage, None, None, cosmwasm_std::Order::Ascending)
+        .flatten()
+        .filter_map(|(k, rules)| {
+            let rules = rules
+            .into_iter()
+            .filter(|rule| rule.flow.is_expired(time))
+            .collect::<Vec<_>>();
+            if rules.is_empty() {
+                return None;
+            }
+            Some((
+                k,
+                rules,
+            ))
+        })
+        .collect()
 }
 
 pub mod tests {

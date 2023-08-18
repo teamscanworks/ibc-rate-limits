@@ -1,4 +1,4 @@
-use cosmwasm_std::{Addr, Timestamp, Uint256};
+use cosmwasm_std::{Addr, Timestamp, Uint256, DepsMut, Env};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::cmp;
@@ -232,7 +232,7 @@ pub struct RateLimit {
 // contract. This function takes that into account so that the channel value
 // that we track matches the channel value at the moment when the ibc
 // transaction started executing
-fn calculate_channel_value(
+pub(crate) fn calculate_channel_value(
     channel_value: Uint256,
     denom: &str,
     funds: Uint256,
@@ -304,7 +304,6 @@ impl RateLimit {
         }
     }
 }
-
 /// Only this address can manage the contract. This will likely be the
 /// governance module, but could be set to something else if needed
 pub const GOVMODULE: Item<Addr> = Item::new("gov_module");
