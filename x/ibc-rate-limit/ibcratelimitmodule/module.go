@@ -136,7 +136,27 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 }
 
 // BeginBlock executes all ABCI BeginBlock logic respective to the txfees module.
-func (am AppModule) BeginBlock(_ sdk.Context, _ abci.RequestBeginBlock) {}
+func (am AppModule) BeginBlock(ctx sdk.Context, _ abci.RequestBeginBlock) {
+	contract := am.ics4wrapper.GetContractAddress(ctx)
+	if contract == "" {
+		return
+	}
+	contractAddr, err := sdk.AccAddressFromBech32(contract)
+	if err != nil {
+		fmt.Printf("[ERROR] failed to parse contract address %v\n", err)
+		return
+	}
+	asJson, err := json.Marshal("rollover_rules")
+	if err != nil {
+		fmt.Printf("[ERROR] failed to marshal rollover msg %v\n", err)
+		return
+	}
+	_, err = am.ics4wrapper.ContractKeeper.Sudo(ctx, contractAddr, asJson)
+	if err != nil {
+		fmt.Printf("[ERROR] failed to send sudo msg %v\n", err)
+		return
+	}
+}
 
 // EndBlock executes all ABCI EndBlock logic respective to the txfees module. It
 // returns no validator updates.

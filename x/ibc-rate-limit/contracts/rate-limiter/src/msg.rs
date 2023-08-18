@@ -99,7 +99,8 @@ pub enum SudoMsg {
     UndoSend {
         packet: Packet,
     },
+    RolloverRules,
 }
 
 #[cw_serde]
-pub enum MigrateMsg {}
+pub struct MigrateMsg {}

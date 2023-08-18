@@ -1,7 +1,7 @@
 use crate::msg::{PathMsg, QuotaMsg};
 use crate::state::{Flow, Path, RateLimit, GOVMODULE, IBCMODULE, RATE_LIMIT_TRACKERS};
 use crate::ContractError;
-use cosmwasm_std::{Addr, DepsMut, Response, Timestamp};
+use cosmwasm_std::{Addr, DepsMut, Response, Timestamp, Uint256};
 
 pub fn add_new_paths(
     deps: DepsMut,
@@ -20,6 +20,14 @@ pub fn add_new_paths(
                 .map(|q| RateLimit {
                     quota: q.into(),
                     flow: Flow::new(0_u128, 0_u128, now, q.duration),
+                    decayed_last_updated: Some(0),
+                    previous_channel_value: Some(Uint256::zero()),
+                    decayed_value: Some(cosmwasm_std::Decimal256::zero()),
+                    period_start: Some(now),
+                    previous_inflow:  Some(Uint256::zero()),
+                    previous_outflow: Some(Uint256::zero()),
+                    decayed_infow: Some(cosmwasm_std::Decimal256::zero()),
+                    decayed_outflow: Some(cosmwasm_std::Decimal256::zero()),
                 })
                 .collect(),
         )?
@@ -95,7 +103,7 @@ pub fn try_reset_path_quota(
                 // Q: What happens here if quote_id not found? seems like we return ok?
                 limits.iter_mut().for_each(|limit| {
                     if limit.quota.name == quota_id.as_ref() {
-                        limit.flow.expire(now, limit.quota.duration)
+                        limit.flow._expire(now, limit.quota.duration)
                     }
                 });
                 Ok(limits)

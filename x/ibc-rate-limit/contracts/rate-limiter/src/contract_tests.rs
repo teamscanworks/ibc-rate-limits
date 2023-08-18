@@ -1,17 +1,95 @@
 #![cfg(test)]
+use std::collections::HashMap;
+use std::str::FromStr;
 
-use crate::packet::Packet;
-use crate::{contract::*, test_msg_recv, test_msg_send, ContractError};
-use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-use cosmwasm_std::{from_binary, Addr, Attribute, Uint256};
+use crate::helpers::expired_rate_limits;
+use crate::msg::MigrateMsg;
+use crate::sudo::rollover_expired_rate_limits;
 
 use crate::helpers::tests::verify_query_response;
 use crate::msg::{InstantiateMsg, PathMsg, QueryMsg, QuotaMsg, SudoMsg};
-use crate::state::tests::RESET_TIME_WEEKLY;
+use crate::packet::Packet;
+use crate::state::tests::{RESET_TIME_DAILY, RESET_TIME_MONTHLY, RESET_TIME_WEEKLY};
 use crate::state::{RateLimit, GOVMODULE, IBCMODULE, RATE_LIMIT_TRACKERS};
-
+use crate::{contract::*, test_msg_recv, test_msg_send, ContractError};
+use cosmwasm_std::testing::{
+    mock_dependencies, mock_env, mock_info, MockApi, MockQuerier, MockStorage,
+};
+use cosmwasm_std::{Timestamp, Decimal256};
+use cosmwasm_std::{from_binary, Addr, Attribute, Env, MemoryStorage, OwnedDeps, Querier, Uint256};
+use cw_multi_test::{App, AppBuilder, BankKeeper, ContractWrapper, Executor};
 const IBC_ADDR: &str = "IBC_MODULE";
 const GOV_ADDR: &str = "GOV_MODULE";
+
+pub const SECONDS_PER_DAY: u64 = 86400;
+pub const SECONDS_PER_HOUR: u64 = 3600;
+
+pub(crate) struct TestEnv {
+    pub env: Env,
+    pub deps: OwnedDeps<MemoryStorage, MockApi, MockQuerier>,
+}
+
+impl Clone for TestEnv {
+    fn clone(&self) -> Self {
+        let mut deps = mock_dependencies();
+        deps.api = self.deps.api.clone();
+        let deps_storage = deps.as_mut().storage;
+        for (k, v) in self.deps.as_ref().storage.range(None, None, cosmwasm_std::Order::Ascending) {
+            deps_storage.set(&k[..], &v[..]);
+        }
+        TestEnv { env: self.env.clone(), deps: deps }
+    }
+}
+
+fn new_test_env(paths: &[PathMsg]) -> TestEnv {
+    let mut deps: OwnedDeps<MemoryStorage, MockApi, MockQuerier> = mock_dependencies();
+    let env = mock_env();
+    println!("time {}", env.block.time.to_string());
+    let msg = InstantiateMsg {
+        gov_module: Addr::unchecked(GOV_ADDR),
+        ibc_module: Addr::unchecked(IBC_ADDR),
+        paths: paths.to_vec(),
+    };
+    let info = mock_info(GOV_ADDR, &vec![]);
+    instantiate(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+    TestEnv { deps, env }
+}
+
+impl TestEnv {
+    pub fn plus_hours(&mut self, hours: u64) {
+        self.env.block.time = self.env.block.time.plus_seconds(hours * SECONDS_PER_HOUR);
+    }
+    pub fn plus_days(&mut self, days: u64) {
+        self.env.block.time = self.env.block.time.plus_seconds(days * SECONDS_PER_DAY);
+    }
+}
+
+// performs a very basic migration test, ensuring that standard migration logic works
+#[test]
+fn test_basic_migration() {
+    let test_env = new_test_env(&[PathMsg {
+        channel_id: format!("any"),
+        denom: format!("denom"),
+        quotas: vec![QuotaMsg::new("weekly", RESET_TIME_WEEKLY, 10, 10)],
+    }]);
+
+    for key in RATE_LIMIT_TRACKERS.keys(
+        &test_env.deps.storage,
+        None,
+        None,
+        cosmwasm_std::Order::Ascending,
+    ) {
+        match key {
+            Ok((k, v)) => {
+                println!("got key {}, {}", k, v);
+            }
+            Err(err) => {
+                println!("got error {err:#?}");
+            }
+        }
+    }
+}
 
 #[test] // Tests we ccan instantiate the contract and that the owners are set correctly
 fn proper_instantiation() {
@@ -219,7 +297,7 @@ fn asymetric_quotas() {
 
 #[test] // Tests we can get the current state of the trackers
 fn query_state() {
-    let mut deps = mock_dependencies();
+    let mut deps: OwnedDeps<MemoryStorage, MockApi, MockQuerier> = mock_dependencies();
 
     let quota = QuotaMsg::new("weekly", RESET_TIME_WEEKLY, 10, 10);
     let msg = InstantiateMsg {
@@ -396,4 +474,367 @@ fn test_tokenfactory_message() {
     let json = r#"{"send_packet":{"packet":{"sequence":4,"source_port":"transfer","source_channel":"channel-0","destination_port":"transfer","destination_channel":"channel-1491","data":{"denom":"transfer/channel-0/factory/osmo12smx2wdlyttvyzvzg54y2vnqwq2qjateuf7thj/czar","amount":"100000000000000000","sender":"osmo1cyyzpxplxdzkeea7kwsydadg87357qnahakaks","receiver":"osmo1c584m4lq25h83yp6ag8hh4htjr92d954vklzja"},"timeout_height":{},"timeout_timestamp":1668024476848430980}}}"#;
     let _parsed: SudoMsg = serde_json_wasm::from_str(json).unwrap();
     //println!("{parsed:?}");
+}
+
+#[test]
+fn test_expired_rate_limits() {
+    let mut test_env = new_test_env(&[PathMsg {
+        channel_id: format!("any"),
+        denom: format!("denom"),
+        quotas: vec![
+            QuotaMsg::new("daily", RESET_TIME_DAILY, 1, 1),
+            QuotaMsg::new("weekly", RESET_TIME_WEEKLY, 5, 5),
+            QuotaMsg::new("monthly", RESET_TIME_MONTHLY, 5, 5),
+        ],
+    }]);
+    // no rules should be expired
+    let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
+    assert_eq!(expired_limits.len(), 0);
+
+    // advance timestamp by half day
+    test_env.plus_hours(12);
+
+    // still no rules should be expired
+    let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
+    assert_eq!(expired_limits.len(), 0);
+
+    // advance timestamp by 13 hours
+    test_env.plus_hours(13);
+
+    // only 1 rule should be expired
+    let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
+    assert_eq!(expired_limits[0].1.len(), 1);
+    assert_eq!(expired_limits[0].1[0].quota.name, "daily");
+
+    // advance timestamp by 6 days
+    test_env.plus_days(6);
+
+    // weekly + daily rules should be expired
+    let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
+    assert_eq!(expired_limits[0].1.len(), 2);
+    // as long as the ordering of the `range(..)` function is the same
+    // this test shouldn't fail
+    assert_eq!(expired_limits[0].1[0].quota.name, "daily");
+    assert_eq!(expired_limits[0].1[1].quota.name, "weekly");
+    // advance timestamp by 24 days for a total of 31 days passed
+    test_env.plus_days(24);
+
+    // daily, weekly, monthly rules should be expired
+    let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
+    assert_eq!(expired_limits[0].1.len(), 3);
+    assert_eq!(expired_limits[0].1[0].quota.name, "daily");
+    assert_eq!(expired_limits[0].1[1].quota.name, "weekly");
+    assert_eq!(expired_limits[0].1[2].quota.name, "monthly");
+}
+#[test]
+fn test_rollover_expired_rate_limits() {
+    let mut test_env = new_test_env(&[PathMsg {
+        channel_id: format!("any"),
+        denom: format!("denom"),
+        quotas: vec![
+            QuotaMsg::new("daily", RESET_TIME_DAILY, 1, 1),
+            QuotaMsg::new("weekly", RESET_TIME_WEEKLY, 5, 5),
+            QuotaMsg::new("monthly", RESET_TIME_MONTHLY, 5, 5),
+        ],
+    }]);
+
+    // store a copy of the unchanged rules
+    let original_rules = get_rules(&test_env);
+    // ensure the helper function indexes rules as expected
+    assert!(original_rules.contains_key("daily"));
+    assert!(original_rules.contains_key("weekly"));
+    assert!(original_rules.contains_key("monthly"));
+
+    // no rules should be expired
+    let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
+    assert_eq!(expired_limits.len(), 0);
+
+    // advance timestamp by a day
+    test_env.plus_hours(25);
+
+    // only 1 rule should be expired
+    let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
+    assert_eq!(expired_limits[0].1.len(), 1);
+    assert_eq!(expired_limits[0].1[0].quota.name, "daily");
+
+    // trigger expiration of daily rate limits
+    rollover_expired_rate_limits(test_env.deps.as_mut(), test_env.env.clone()).unwrap();
+
+    // store a copy of rules after the daily limit has changed
+    let daily_rules_changed = get_rules(&test_env);
+    // ensure the daily period is different
+    assert!(
+        daily_rules_changed.get("daily").unwrap().flow.period_end
+            > original_rules.get("daily").unwrap().flow.period_end
+    );
+    // ensure weekly and monthly rules are the same
+    assert!(
+        daily_rules_changed.get("weekly").unwrap().flow.period_end
+            == original_rules.get("weekly").unwrap().flow.period_end
+    );
+    assert!(
+        daily_rules_changed.get("monthly").unwrap().flow.period_end
+            == original_rules.get("monthly").unwrap().flow.period_end
+    );
+
+    // advance timestamp by half day, no rules should be changed
+    test_env.plus_hours(12);
+
+    // there should be no expired rate limits
+    let expired_limits = expired_rate_limits(test_env.deps.as_ref(), test_env.env.block.time);
+    assert_eq!(expired_limits.len(), 0);
+
+    // advance timestamp by another half day
+    test_env.plus_hours(13);
+
+    // daily rule should change again
+    rollover_expired_rate_limits(test_env.deps.as_mut(), test_env.env.clone()).unwrap();
+
+    let daily_rules_changed2 = get_rules(&test_env);
+    // ensure the daily period is different
+    assert!(
+        daily_rules_changed2.get("daily").unwrap().flow.period_end
+            > daily_rules_changed.get("daily").unwrap().flow.period_end
+    );
+    // ensure weekly and monthly rules are the same
+    assert!(
+        daily_rules_changed2.get("weekly").unwrap().flow.period_end
+            == original_rules.get("weekly").unwrap().flow.period_end
+    );
+    assert!(
+        daily_rules_changed2.get("monthly").unwrap().flow.period_end
+            == original_rules.get("monthly").unwrap().flow.period_end
+    );
+
+    // advance timestamp by 6 days
+    test_env.plus_days(6);
+
+    // daily rule + weekly rules should change
+    rollover_expired_rate_limits(test_env.deps.as_mut(), test_env.env.clone()).unwrap();
+
+    let weekly_rules_changed = get_rules(&test_env);
+    // ensure the daily period is different
+    assert!(
+        weekly_rules_changed.get("daily").unwrap().flow.period_end
+            > daily_rules_changed2.get("daily").unwrap().flow.period_end
+    );
+    // ensure weekly is different
+    assert!(
+        weekly_rules_changed.get("weekly").unwrap().flow.period_end
+            > daily_rules_changed2.get("weekly").unwrap().flow.period_end
+    );
+    // ensure monthly is unchanged
+    assert!(
+        weekly_rules_changed.get("monthly").unwrap().flow.period_end
+            == original_rules.get("monthly").unwrap().flow.period_end
+    );
+
+    // advance timestamp by 24 days
+    test_env.plus_days(24);
+
+    // all rules should now rollover
+    rollover_expired_rate_limits(test_env.deps.as_mut(), test_env.env.clone()).unwrap();
+
+    let monthly_rules_changed = get_rules(&test_env);
+    // ensure all three periods have reset
+    assert!(
+        monthly_rules_changed.get("daily").unwrap().flow.period_end
+            > weekly_rules_changed.get("daily").unwrap().flow.period_end
+    );
+    assert!(
+        monthly_rules_changed.get("weekly").unwrap().flow.period_end
+            > weekly_rules_changed.get("weekly").unwrap().flow.period_end
+    );
+    assert!(
+        monthly_rules_changed
+            .get("monthly")
+            .unwrap()
+            .flow
+            .period_end
+            > weekly_rules_changed.get("monthly").unwrap().flow.period_end
+    );
+}
+
+#[test]
+fn test_decay_two_period() {
+    let mut test_env = new_test_env(&[PathMsg {
+        channel_id: format!("any"),
+        denom: format!("denom"),
+        quotas: vec![
+            QuotaMsg::new("daily", RESET_TIME_DAILY, 1, 1),
+            QuotaMsg::new("weekly", RESET_TIME_WEEKLY, 5, 5),
+            QuotaMsg::new("monthly", RESET_TIME_MONTHLY, 5, 5),
+        ],
+    }]);
+
+    let _ = get_rules(&test_env);
+
+    //for (k, mut rate_limit) in rules {
+    //    println!("key: {k}, rate_limit: {rate_limit:#?}");
+    //    //let res = rate_limit.check_decay_rate(test_env.env.clone()).unwrap();
+    //}
+
+    let send_msg = test_msg_send!(
+        channel_id: format!("channel"),
+        denom: format!("denom"),
+        channel_value: 3_300_300_u32.into(),
+        funds: 100_u32.into()
+    );
+    sudo(
+        test_env.deps.as_mut(),
+        test_env.env.clone(),
+        send_msg.clone(),
+    )
+    .unwrap();
+
+    let recv_msg = test_msg_recv!(
+        channel_id: format!("channel"),
+        denom: format!("denom"),
+        channel_value: 3_300_300_u32.into(),
+        funds: 30_u32.into()
+    );
+    sudo(
+        test_env.deps.as_mut(),
+        test_env.env.clone(),
+        recv_msg.clone(),
+    )
+    .unwrap();
+
+    let query_msg = QueryMsg::GetQuotas {
+        channel_id: format!("any"),
+        denom: format!("denom"),
+    };
+
+    // we are just testing a simple query here
+    let res = query(
+        test_env.deps.as_ref(),
+        test_env.env.clone(),
+        query_msg.clone(),
+    )
+    .unwrap();
+    let _: Vec<RateLimit> = from_binary(&res).unwrap();
+    let rules = get_rules(&test_env);
+    for (key, mut rate_limit) in rules {
+        let mut env = test_env.clone();
+        if rate_limit.quota.name.eq("daily") {
+            let rate = rate_limit.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::new(Uint256::from_u128(3300300)));
+            env.plus_hours(25);
+
+            let previous_period_end = rate_limit.flow.period_end;
+
+            rollover_expired_rate_limits(env.deps.as_mut(), env.env.clone()).unwrap();
+
+            let mut rules2 = get_rules(&env);
+            let rate_limit2 = rules2.get_mut(&key).unwrap();
+
+            // zero because decayed_value not updated, and block time
+            // is equal to the last time a rollover was performed
+            // therefore no rule updates
+            let rate = rate_limit2.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::zero());
+
+            env.plus_hours(2);
+
+            let rate = rate_limit2.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::new(Uint256::from_u128(3036276)));
+
+            env.plus_hours(2);
+
+            let rate = rate_limit2.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::new(Uint256::from_u128(2772252)));
+
+
+            let current_period_end = rate_limit2.flow.period_end;
+            println!("current_period_end {}", current_period_end);
+            assert!(previous_period_end < current_period_end);
+
+        } else if rate_limit.quota.name.eq("weekly") {
+            let rate = rate_limit.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::new(Uint256::from_u128(3300300)));
+            env.plus_hours((7 * 24)+1);
+
+            let previous_period_end = rate_limit.flow.period_end;
+
+            rollover_expired_rate_limits(env.deps.as_mut(), env.env.clone()).unwrap();
+
+            let mut rules2 = get_rules(&env);
+            let rate_limit2 = rules2.get_mut(&key).unwrap();
+
+            // zero because decayed_value not updated, and block time
+            // is equal to the last time a rollover was performed
+            // therefore no rule updates
+            let rate = rate_limit2.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::zero());
+
+            env.plus_hours(2);
+
+            let rate = rate_limit2.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::new(Uint256::from_u128(3267297)));
+
+            env.plus_hours(2);
+
+            let rate = rate_limit2.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::new(Uint256::from_u128(3234294)));
+
+
+            let current_period_end = rate_limit2.flow.period_end;
+            println!("current_period_end {}", current_period_end);
+            assert!(previous_period_end < current_period_end);
+        } else if rate_limit.quota.name.eq("monthly") {
+            let rate = rate_limit.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::new(Uint256::from_u128(3300300)));
+            env.plus_hours((31 * 24)+1);
+
+            let previous_period_end = rate_limit.flow.period_end;
+
+            rollover_expired_rate_limits(env.deps.as_mut(), env.env.clone()).unwrap();
+
+            let mut rules2 = get_rules(&env);
+            let rate_limit2 = rules2.get_mut(&key).unwrap();
+
+            // zero because decayed_value not updated, and block time
+            // is equal to the last time a rollover was performed
+            // therefore no rule updates
+            let rate = rate_limit2.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::zero());
+
+            env.plus_hours(24);
+
+            let rate = rate_limit2.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::new(Uint256::from_u128(3201291)));
+
+            env.plus_hours(12);
+
+            let rate = rate_limit2.check_decay_rate(env.env.clone()).unwrap();
+            assert_eq!(rate, Decimal256::new(Uint256::from_u128(3135285)));
+
+
+            let current_period_end = rate_limit2.flow.period_end;
+            println!("current_period_end {}", current_period_end);
+            assert!(previous_period_end < current_period_end);
+        } else {
+            panic!("unxpected rate_limit quota name");
+        }
+    }
+}
+
+// shorthand for returning all rules
+fn get_rules(test_env: &TestEnv) -> HashMap<String, RateLimit> {
+    let rules = RATE_LIMIT_TRACKERS
+        .range(
+            &test_env.deps.storage,
+            None,
+            None,
+            cosmwasm_std::Order::Ascending,
+        )
+        .flatten()
+        .collect::<Vec<_>>();
+    let mut indexed_rules: HashMap<String, RateLimit> = HashMap::new();
+    rules.into_iter().for_each(|(_, rules)| {
+        rules.into_iter().for_each(|rule| {
+            indexed_rules.insert(rule.quota.name.clone(), rule);
+        });
+    });
+    indexed_rules
 }

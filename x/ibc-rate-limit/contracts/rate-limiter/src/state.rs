@@ -1,4 +1,4 @@
-use cosmwasm_std::{Addr, Timestamp, Uint256};
+use cosmwasm_std::{Addr, DepsMut, Env, Timestamp, Uint256};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::cmp;
@@ -86,7 +86,7 @@ impl Flow {
     /// (balance_in, balance_out) where balance_in in is how much has been
     /// transferred into the flow, and balance_out is how much value transferred
     /// out.
-    pub fn balance(&self) -> (Uint256, Uint256) {
+    pub fn _balance(&self) -> (Uint256, Uint256) {
         (
             self.inflow.saturating_sub(self.outflow),
             self.outflow.saturating_sub(self.inflow),
@@ -94,8 +94,13 @@ impl Flow {
     }
 
     /// checks if the flow, in the current state, has exceeded a max allowance
-    pub fn exceeds(&self, direction: &FlowType, max_inflow: Uint256, max_outflow: Uint256) -> bool {
-        let (balance_in, balance_out) = self.balance();
+    pub fn _exceeds(
+        &self,
+        direction: &FlowType,
+        max_inflow: Uint256,
+        max_outflow: Uint256,
+    ) -> bool {
+        let (balance_in, balance_out) = self._balance();
         match direction {
             FlowType::In => balance_in > max_inflow,
             FlowType::Out => balance_out > max_outflow,
@@ -103,8 +108,8 @@ impl Flow {
     }
 
     /// returns the balance in a direction. This is used for displaying cleaner errors
-    pub fn balance_on(&self, direction: &FlowType) -> Uint256 {
-        let (balance_in, balance_out) = self.balance();
+    pub fn _balance_on(&self, direction: &FlowType) -> Uint256 {
+        let (balance_in, balance_out) = self._balance();
         match direction {
             FlowType::In => balance_in,
             FlowType::Out => balance_out,
@@ -120,7 +125,7 @@ impl Flow {
 
     /// Expire resets the Flow to start tracking the value transfer from the
     /// moment this method is called.
-    pub fn expire(&mut self, now: Timestamp, duration: u64) {
+    pub fn _expire(&mut self, now: Timestamp, duration: u64) {
         self.inflow = Uint256::from(0_u32);
         self.outflow = Uint256::from(0_u32);
         self.period_end = now.plus_seconds(duration);
@@ -153,7 +158,7 @@ impl Flow {
     ) -> bool {
         let mut expired = false;
         if self.is_expired(now) {
-            self.expire(now, quota.duration);
+            self._expire(now, quota.duration);
             expired = true;
         }
         self.add_flow(direction.clone(), funds);
@@ -182,7 +187,7 @@ impl Quota {
     /// total_value) in each direction based on the total value of the denom in
     /// the channel. The result tuple represents the max capacity when the
     /// transfer is in directions: (FlowType::In, FlowType::Out)
-    pub fn capacity(&self) -> (Uint256, Uint256) {
+    pub fn _capacity(&self) -> (Uint256, Uint256) {
         match self.channel_value {
             Some(total_value) => (
                 total_value * Uint256::from(self.max_percentage_recv) / Uint256::from(100_u32),
@@ -193,8 +198,8 @@ impl Quota {
     }
 
     /// returns the capacity in a direction. This is used for displaying cleaner errors
-    pub fn capacity_on(&self, direction: &FlowType) -> Uint256 {
-        let (max_in, max_out) = self.capacity();
+    pub fn _capacity_on(&self, direction: &FlowType) -> Uint256 {
+        let (max_in, max_out) = self._capacity();
         match direction {
             FlowType::In => max_in,
             FlowType::Out => max_out,
@@ -225,6 +230,19 @@ impl From<&QuotaMsg> for Quota {
 pub struct RateLimit {
     pub quota: Quota,
     pub flow: Flow,
+    // not very storage efficient, can probably
+    // remove storing the decayed value for all 3 previous_X types
+    // and calculate that at run time
+    //
+    // alternatively can only track previous_inflow and previous_outflow
+    pub previous_channel_value: Option<Uint256>,
+    pub previous_inflow: Option<Uint256>,
+    pub previous_outflow: Option<Uint256>,
+    pub decayed_last_updated: Option<u64>,
+    pub decayed_value: Option<cosmwasm_std::Decimal256>,
+    pub decayed_infow: Option<cosmwasm_std::Decimal256>,
+    pub decayed_outflow: Option<cosmwasm_std::Decimal256>,
+    pub period_start: Option<Timestamp>,
 }
 
 // The channel value on send depends on the amount on escrow. The ibc transfer
@@ -232,7 +250,7 @@ pub struct RateLimit {
 // contract. This function takes that into account so that the channel value
 // that we track matches the channel value at the moment when the ibc
 // transaction started executing
-fn calculate_channel_value(
+pub(crate) fn calculate_channel_value(
     channel_value: Uint256,
     denom: &str,
     funds: Uint256,
@@ -269,14 +287,23 @@ impl RateLimit {
     ) -> Result<Self, ContractError> {
         // Flow used before this transaction is applied.
         // This is used to make error messages more informative
-        let initial_flow = self.flow.balance_on(direction);
+        let initial_flow = self.flow._balance_on(direction);
 
         // Apply the transfer. From here on, we will updated the flow with the new transfer
         // and check if  it exceeds the quota at the current time
 
         let expired = self.flow.apply_transfer(direction, funds, now, &self.quota);
         // Cache the channel value if it has never been set or it has expired.
-        if self.quota.channel_value.is_none() || expired {
+        //
+        // NOTE: due to the way rollover is currently working, this
+        // may be None / expired for backwards compatability, or it may be Some(0)
+        if self
+            .quota
+            .channel_value
+            .unwrap_or(Uint256::zero())
+            .is_zero()
+            || expired
+        {
             self.quota.channel_value = Some(calculate_channel_value(
                 channel_value,
                 &path.denom,
@@ -285,26 +312,176 @@ impl RateLimit {
             ))
         }
 
-        let (max_in, max_out) = self.quota.capacity();
+        let (max_in, max_out) = self.quota._capacity();
         // Return the effects of applying the transfer or an error.
-        match self.flow.exceeds(direction, max_in, max_out) {
+        match self.flow._exceeds(direction, max_in, max_out) {
             true => Err(ContractError::RateLimitExceded {
                 channel: path.channel.to_string(),
                 denom: path.denom.to_string(),
                 amount: funds,
                 quota_name: self.quota.name.to_string(),
                 used: initial_flow,
-                max: self.quota.capacity_on(direction),
+                max: self.quota._capacity_on(direction),
                 reset: self.flow.period_end,
             }),
             false => Ok(RateLimit {
                 quota: self.quota.clone(), // Cloning here because self.quota.name (String) does not allow us to implement Copy
                 flow: self.flow, // We can Copy flow, so this is slightly more efficient than cloning the whole RateLimit
+                previous_channel_value: self.previous_channel_value,
+                decayed_last_updated: self.decayed_last_updated,
+                decayed_value: self.decayed_value,
+                decayed_infow: self.decayed_infow,
+                decayed_outflow: self.decayed_outflow,
+                period_start: Some(now),
+                previous_inflow: self.previous_inflow,
+                previous_outflow: self.previous_outflow,
             }),
         }
     }
-}
+    // executes business logic to handle period changes
+    pub fn handle_rollover(&mut self, env: cosmwasm_std::Env) {
+        self.flow._expire(env.block.time, self.quota.duration);
+        self.period_start = Some(env.block.time.clone());
+        self.previous_channel_value = self.quota.channel_value.clone();
+        self.previous_inflow = Some(self.flow.inflow);
+        self.previous_outflow = Some(self.flow.outflow);
+    }
+    // returns current channel value averaged against the previous channel value using a decaying function
+    pub fn averaged_channel_value(&self) -> Option<cosmwasm_std::Decimal256> {
+        // when a rule is first initialized there is no previous period value, so there is nothing to average
+        if self
+            .previous_channel_value
+            .unwrap_or(Uint256::zero())
+            .is_zero()
+        {
+            return Some(cosmwasm_std::Decimal256::new(self.quota.channel_value?));
+        }
+        let decayed_channel_value = cosmwasm_std::Decimal256::new(self.previous_channel_value?)
+            .checked_sub(self.decayed_value?)
+            .ok()?;
+        Some(
+            (cosmwasm_std::Decimal256::new(self.quota.channel_value?) + decayed_channel_value)
+                / cosmwasm_std::Decimal256::from_atomics(2_u64, 0).ok()?,
+        )
+    }
+    // like Quota::capacity but using decaying average
+    pub fn averaged_capacity(&self) -> Option<(Uint256, Uint256)> {
+        let averaged_channel_value = self.averaged_channel_value()?;
+        let averaged_channel_value: Uint256 = averaged_channel_value.atomics();
+        Some((
+            averaged_channel_value * Uint256::from(self.quota.max_percentage_recv)
+                / Uint256::from(100_u32),
+            averaged_channel_value * Uint256::from(self.quota.max_percentage_send)
+                / Uint256::from(100_u32),
+        ))
+    }
+    // like Quota::_capacity_on but using decaying average
+    pub fn averaged_capacity_on(&self, direction: &FlowType) -> Option<Uint256> {
+        let (max_in, max_out) = self.averaged_capacity()?;
+        match direction {
+            FlowType::In => Some(max_in),
+            FlowType::Out => Some(max_out),
+        }
+    }
+    // like Flow::_balance but using decaying average
+    pub fn averaged_balance(&self) -> Option<(Uint256, Uint256)> {
+        let decayed_inflow = self
+            .decayed_infow
+            .unwrap_or(cosmwasm_std::Decimal256::zero());
+        let decayed_outflow = self
+            .decayed_outflow
+            .unwrap_or(cosmwasm_std::Decimal256::zero());
 
+        if decayed_inflow.is_zero() || decayed_outflow.is_zero() {
+            return Some(self.flow._balance());
+        }
+        let two = cosmwasm_std::Decimal256::one() + cosmwasm_std::Decimal256::one();
+        let averaged_inflow =
+            ((decayed_inflow + cosmwasm_std::Decimal256::new(self.flow.inflow)) / (two)).atomics();
+        let averaged_outflow =
+            ((decayed_outflow + cosmwasm_std::Decimal256::new(self.flow.outflow)) / (two))
+                .atomics();
+        Some((
+            averaged_inflow.saturating_sub(averaged_outflow),
+            averaged_outflow.saturating_sub(averaged_inflow),
+        ))
+    }
+    pub fn averaged_balance_on(&self, direction: &FlowType) -> Option<Uint256> {
+        let (balance_in, balance_out) = if let Some((b_in, b_out)) = self.averaged_balance() {
+            (b_in, b_out)
+        } else {
+            return Some(self.flow._balance_on(direction));
+        };
+        match direction {
+            FlowType::In => Some(balance_in),
+            FlowType::Out => Some(balance_out),
+        }
+    }
+    pub fn averaged_exceeds(
+        &self,
+        direction: &FlowType,
+        max_inflow: Uint256,
+        max_outflow: Uint256,
+    ) -> bool {
+        let (balance_in, balance_out) = if let Some((b_in, b_out)) = self.averaged_balance() {
+            (b_in, b_out)
+        } else {
+            return self.flow._exceeds(direction, max_inflow, max_outflow);
+        };
+        match direction {
+            FlowType::In => balance_in > max_inflow,
+            FlowType::Out => balance_out > max_outflow,
+        }
+    }
+    // returns the amount of time that has passed in the given time period, based on the current timestamp recorded in the block
+    // this transaction is executing in
+    pub fn period_percent_passed(
+        &self,
+        block_time_second: u64,
+    ) -> Option<cosmwasm_std::Decimal256> {
+        // todo: measure the gas costs of calling `self.period_start.seconds()` twice vs storing the result of the function call in memory as is done now
+        let period_start_seconds = self.period_start?.seconds();
+        return Some(cosmwasm_std::Decimal256::percent(
+            ((block_time_second - period_start_seconds) * 100)
+                / (self.flow.period_end.seconds() - period_start_seconds),
+        ));
+
+        //return Some(cosmwasm_std::Decimal256::percent(((block_time_second - period_start_seconds) * 100) / (period_end_seconds - period_start_seconds)));
+    }
+    // used to perform a decay value update when needed, returning the newly decayed value if updated, otherwise
+    // returning hte existing decayed value.
+    //
+    // the decayed value is subtracted from the previous channel value, as the decayed value represents the amou
+    // checks if a decay operation should be applied to the value from the previous time period
+    // returning the existing decayed value if there is no difference in block height or timestamp
+    pub fn check_decay_rate(&mut self, env: cosmwasm_std::Env) -> Option<cosmwasm_std::Decimal256> {
+        if self.decayed_last_updated? == env.block.height {
+            return self.decayed_value;
+        }
+        // should realistically only happen the first period after the rate limit is initialized
+        if self
+            .previous_channel_value
+            .unwrap_or(Uint256::zero())
+            .is_zero()
+        {
+            // todo: should we count the decimal places
+            return Some(cosmwasm_std::Decimal256::new(self.quota.channel_value?));
+            // return cosmwasm_std::Decimal::from_atomics(self.quota.channel_value?, 0).ok();
+        }
+
+        if self.period_start? == env.block.time {
+            // no time passed, return zero, this has the edge case of two blocks potentially having
+            // the same timestamp under certain conditions (fast block, loose constraints around timestamp requirements, etc...)
+            return self.decayed_value;
+        }
+
+        let percent_passed = self.period_percent_passed(env.block.time.seconds())?;
+        let previous_channel_value = cosmwasm_std::Decimal256::new(self.previous_channel_value?);
+        let decayed_amount = previous_channel_value * percent_passed;
+        self.decayed_value = Some(previous_channel_value - decayed_amount);
+        return self.decayed_value;
+    }
+}
 /// Only this address can manage the contract. This will likely be the
 /// governance module, but could be set to something else if needed
 pub const GOVMODULE: Item<Addr> = Item::new("gov_module");
@@ -350,16 +527,16 @@ pub mod tests {
         assert!(!flow.is_expired(epoch.plus_seconds(RESET_TIME_WEEKLY)));
         assert!(flow.is_expired(epoch.plus_seconds(RESET_TIME_WEEKLY).plus_nanos(1)));
 
-        assert_eq!(flow.balance(), (0_u32.into(), 0_u32.into()));
+        assert_eq!(flow._balance(), (0_u32.into(), 0_u32.into()));
         flow.add_flow(FlowType::In, 5_u32.into());
-        assert_eq!(flow.balance(), (5_u32.into(), 0_u32.into()));
+        assert_eq!(flow._balance(), (5_u32.into(), 0_u32.into()));
         flow.add_flow(FlowType::Out, 2_u32.into());
-        assert_eq!(flow.balance(), (3_u32.into(), 0_u32.into()));
+        assert_eq!(flow._balance(), (3_u32.into(), 0_u32.into()));
         // Adding flow doesn't affect expiration
         assert!(!flow.is_expired(epoch.plus_seconds(RESET_TIME_DAILY)));
 
-        flow.expire(epoch.plus_seconds(RESET_TIME_WEEKLY), RESET_TIME_WEEKLY);
-        assert_eq!(flow.balance(), (0_u32.into(), 0_u32.into()));
+        flow._expire(epoch.plus_seconds(RESET_TIME_WEEKLY), RESET_TIME_WEEKLY);
+        assert_eq!(flow._balance(), (0_u32.into(), 0_u32.into()));
         assert_eq!(flow.inflow, Uint256::from(0_u32));
         assert_eq!(flow.outflow, Uint256::from(0_u32));
         assert_eq!(flow.period_end, epoch.plus_seconds(RESET_TIME_WEEKLY * 2));
