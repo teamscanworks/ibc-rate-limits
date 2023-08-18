@@ -129,13 +129,18 @@ func (im *IBCModule) OnRecvPacket(
 	if err := ValidateReceiverAddress(packet); err != nil {
 		return osmoutils.NewEmitErrorAcknowledgement(ctx, types.ErrBadMessage, err.Error())
 	}
-
 	contract := im.ics4Middleware.GetContractAddress(ctx)
 	if contract == "" {
 		// The contract has not been configured. Continue as usual
 		return im.app.OnRecvPacket(ctx, packet, relayer)
 	}
-
+	// todo: move to OnChanOpenConfirm (however this requires figuring out how to extract a packet there)
+	if err := AutomaticRateLimitCreation(
+		ctx, im.ics4Middleware.ContractKeeper, contract, packet,
+	); err != nil {
+		// too: better error handling
+		return osmoutils.NewEmitErrorAcknowledgement(ctx, types.ErrContractError)
+	}
 	err := CheckAndUpdateRateLimits(ctx, im.ics4Middleware.ContractKeeper, "recv_packet", contract, packet)
 	if err != nil {
 		if strings.Contains(err.Error(), "rate limit exceeded") {
