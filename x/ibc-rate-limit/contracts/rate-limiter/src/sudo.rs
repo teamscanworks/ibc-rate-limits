@@ -1,9 +1,9 @@
-use cosmwasm_std::{DepsMut, Response, Timestamp, Uint256};
+use cosmwasm_std::{DepsMut, Response, Timestamp, Uint256, Env};
 
 use crate::{
     packet::Packet,
     state::{FlowType, Path, RateLimit, RATE_LIMIT_TRACKERS},
-    ContractError,
+    ContractError, msg::{PathMsg, QuotaMsg}, execute::add_new_paths,
 };
 
 // This function will process a packet and extract the paths information, funds,
@@ -190,4 +190,29 @@ pub fn undo_send(deps: DepsMut, packet: Packet) -> Result<Response, ContractErro
         .add_attribute("channel_id", path.channel.to_string())
         .add_attribute("denom", path.denom.to_string())
         .add_attribute("any_channel", (!any_trackers.is_empty()).to_string()))
+}
+
+pub fn automatic_rate_limit_creation(
+    deps: DepsMut,
+    env: Env,
+    packet: Packet,
+) -> Result<Response, ContractError> {
+    let (channel_id, denom) = packet.path_data(&FlowType::Out); // Sends have direction out.
+    let path = &Path::new(channel_id, &denom);
+    //let any_path = Path::new("any", &denom);
+    let funds = packet.get_funds();
+
+    let path_msg = PathMsg::new(path.channel.clone(), denom, vec![
+        QuotaMsg::new("daily", 86400, 30, 30),
+        QuotaMsg::new("week", 604800, 60, 60),
+    ]);
+
+    add_new_paths(deps, vec![path_msg], env.block.time)?;
+
+    return Ok(Response::new()
+        .add_attribute("method", "auto_rate_limit")
+        .add_attribute("channel_id", path.channel.to_string())
+        .add_attribute("denom", path.denom.to_string())
+        .add_attribute("funds", funds.to_string())
+        .add_attribute("quota", "default"));
 }

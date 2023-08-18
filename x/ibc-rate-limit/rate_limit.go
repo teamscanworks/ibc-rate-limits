@@ -51,6 +51,40 @@ type UndoPacketMsg struct {
 	Packet UnwrappedPacket `json:"packet"`
 }
 
+type AutomaticRateLimitMsg struct {
+	AutomaticRateLimit AutomaticRateLimitPacketMsg `json:"automatic_rate_limit"`
+}
+
+type AutomaticRateLimitPacketMsg struct {
+	Packet UnwrappedPacket `json:"packet"`
+}
+
+// triggers automatic rate limit rule creation
+func AutomaticRateLimitCreation(ctx sdk.Context, contractKeeper *wasmkeeper.PermissionedKeeper, contract string, packet exported.PacketI) error {
+
+	contractAddr, err := sdk.AccAddressFromBech32(contract)
+	if err != nil {
+		return err
+	}
+
+	unwrapped, err := unwrapPacket(packet)
+	if err != nil {
+		return err
+	}
+
+	msg := AutomaticRateLimitMsg{AutomaticRateLimit: AutomaticRateLimitPacketMsg{Packet: unwrapped}}
+	asJson, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	_, err = contractKeeper.Sudo(ctx, contractAddr, asJson)
+	if err != nil {
+		return errorsmod.Wrap(types.ErrContractError, err.Error())
+	}
+	return nil
+}
+
 func UndoSendRateLimit(ctx sdk.Context, contractKeeper *wasmkeeper.PermissionedKeeper,
 	contract string,
 	packet exported.PacketI,
