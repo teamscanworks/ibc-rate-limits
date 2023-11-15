@@ -1,8 +1,8 @@
-use cosmwasm_std::{DepsMut, Response, Timestamp, Uint256};
+use cosmwasm_std::{DepsMut, Response, Timestamp, Uint256, Addr};
 
 use crate::{
-    packet::Packet,
-    state::{FlowType, Path, RateLimit, RATE_LIMIT_TRACKERS},
+    packet::{Packet, FungibleTokenData},
+    state::{FlowType, Path, RateLimit, RATE_LIMIT_TRACKERS, TEMPORARY_RATE_LIMIT_BYPASS},
     ContractError,
 };
 
@@ -34,7 +34,7 @@ pub fn process_packet(
     #[cfg(not(test))]
     let channel_value = packet.channel_value(deps.as_ref(), &direction)?;
 
-    try_transfer(deps, path, channel_value, funds, direction, now)
+    try_transfer(deps, path, channel_value, funds, direction, now, packet.sender())
 }
 
 /// This function checks the rate limit and, if successful, stores the updated data about the value
@@ -50,6 +50,7 @@ pub fn try_transfer(
     funds: Uint256,
     direction: FlowType,
     now: Timestamp,
+    sender: Addr
 ) -> Result<Response, ContractError> {
     // Sudo call. Only go modules should be allowed to access this
 
@@ -62,6 +63,7 @@ pub fn try_transfer(
     let mut trackers = RATE_LIMIT_TRACKERS
         .may_load(deps.storage, path.into())?
         .unwrap_or_default();
+    let mut bypass_queue = TEMPORARY_RATE_LIMIT_BYPASS.may_load(deps.storage, path.into())?.unwrap_or_default();
 
     let not_configured = trackers.is_empty() && any_trackers.is_empty();
 
@@ -72,6 +74,22 @@ pub fn try_transfer(
             .add_attribute("channel_id", path.channel.to_string())
             .add_attribute("denom", path.denom.to_string())
             .add_attribute("quota", "none"));
+    }
+    if let Some(bypass_amount) = bypass_queue.get(&sender.to_string()) {
+        // if bypass amount is greater than 0 ensure that it is greater than or equal to the amount being transferred
+        if *bypass_amount  > Uint256::zero() {
+            if funds > *bypass_amount {
+                return Err(ContractError::InsufficientBypassAllowance);
+            }
+            // address allowed to bypass, so remove the existing bypass entry before returning
+            bypass_queue.remove(&sender.to_string());
+            TEMPORARY_RATE_LIMIT_BYPASS.save(deps.storage, path.into(), &bypass_queue)?;
+            return Ok(Response::new()
+            .add_attribute("method", "try_transfer")
+            .add_attribute("channel_id", path.channel.to_string())
+            .add_attribute("denom", path.denom.to_string())
+            .add_attribute("bypass", "ok"));
+        }
     }
 
     // If any of the RateLimits fails, allow_transfer() will return

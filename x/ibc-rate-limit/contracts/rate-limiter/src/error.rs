@@ -26,4 +26,6 @@ pub enum ContractError {
         channel_id: String,
         denom: String,
     },
+    #[error("more tokens than allowed attempted to be transferred")]
+    InsufficientBypassAllowance,
 }

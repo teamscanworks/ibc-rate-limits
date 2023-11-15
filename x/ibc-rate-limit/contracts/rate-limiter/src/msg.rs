@@ -75,6 +75,12 @@ pub enum ExecuteMsg {
         denom: String,
         quota_id: String,
     },
+    BypassUpdate {
+        sender: Addr,
+        channel_id: String,
+        denom: String,
+        amount: cosmwasm_std::Uint256
+    }
 }
 
 #[cw_serde]

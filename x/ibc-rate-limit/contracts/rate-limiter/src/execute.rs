@@ -1,7 +1,7 @@
 use crate::msg::{PathMsg, QuotaMsg};
-use crate::state::{Flow, Path, RateLimit, GOVMODULE, IBCMODULE, RATE_LIMIT_TRACKERS};
+use crate::state::{Flow, Path, RateLimit, GOVMODULE, IBCMODULE, RATE_LIMIT_TRACKERS, TEMPORARY_RATE_LIMIT_BYPASS};
 use crate::ContractError;
-use cosmwasm_std::{Addr, DepsMut, Response, Timestamp};
+use cosmwasm_std::{Addr, DepsMut, Response, Timestamp, Uint256};
 
 pub fn add_new_paths(
     deps: DepsMut,
@@ -106,6 +106,22 @@ pub fn try_reset_path_quota(
     Ok(Response::new()
         .add_attribute("method", "try_reset_channel")
         .add_attribute("channel_id", channel_id))
+}
+
+
+/// updates the bypass queue to allow the sender to send up to amount in a single transaction without
+/// triggering rate limit evaluation
+/// 
+/// to "remove" an address from the bypass queue you can set `amount == 0`
+pub fn bypass_update(deps: DepsMut, sender: Addr, channel_id: String, denom: String, amount: Uint256) -> Result<Response, ContractError> {
+    let path = &Path::new(channel_id, denom);
+    let mut bypass_queue = TEMPORARY_RATE_LIMIT_BYPASS.may_load(deps.storage, path.into())?.unwrap_or_default();
+
+    bypass_queue.insert(sender.to_string(), amount);
+
+    TEMPORARY_RATE_LIMIT_BYPASS.save(deps.storage, path.into(), &bypass_queue)?;
+
+    Ok(Response::new())
 }
 
 #[cfg(test)]

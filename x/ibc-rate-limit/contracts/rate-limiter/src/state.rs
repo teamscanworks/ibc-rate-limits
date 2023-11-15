@@ -1,9 +1,9 @@
 use cosmwasm_std::{Addr, Timestamp, Uint256};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::cmp;
+use std::{cmp, collections::HashMap};
 
-use cw_storage_plus::{Item, Map};
+use cw_storage_plus::{Item, Map, Deque};
 
 use crate::{msg::QuotaMsg, ContractError};
 
@@ -331,6 +331,19 @@ pub const IBCMODULE: Item<Addr> = Item::new("ibc_module");
 /// composite keys instead of a struct to avoid having to implement the
 /// PrimaryKey trait
 pub const RATE_LIMIT_TRACKERS: Map<(String, String), Vec<RateLimit>> = Map::new("flow");
+
+
+/// Indicates accounts that can bypass a rate limit for a specific IBC Channel + denom, and the amount that can be sent
+/// 
+/// maps (ibc_channel, denom) => sender => amount 
+pub const TEMPORARY_RATE_LIMIT_BYPASS: Map<(String, String), HashMap<String, Uint256>> = Map::new("bypass");
+
+/// BypassQueue is a workaround for the `Map` storage type not support
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
+pub struct BypassQueue {
+    pub entries: HashMap<String, Uint256>
+}
+
 
 #[cfg(test)]
 pub mod tests {

@@ -59,6 +59,13 @@ pub fn execute(
             quota_id,
             env.block.time,
         ),
+        ExecuteMsg::BypassUpdate { sender, channel_id, denom, amount } => execute::bypass_update(
+            deps,
+            sender,
+            channel_id,
+            denom,
+            amount
+        )
     }
 }
 

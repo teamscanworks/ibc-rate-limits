@@ -184,6 +184,11 @@ impl Packet {
     pub fn path_data(&self, direction: &FlowType) -> (String, String) {
         (self.local_channel(direction), self.local_denom(direction))
     }
+
+    /// returns the address that was responsibnle for originating this ibc transfer
+    pub fn sender(&self) -> Addr {
+        self.data.sender.clone()
+    }
 }
 
 // Helpers
