@@ -75,14 +75,23 @@ pub fn try_transfer(
             .add_attribute("denom", path.denom.to_string())
             .add_attribute("quota", "none"));
     }
-    if let Some(bypass_amount) = bypass_queue.get(&sender.to_string()) {
-        // if bypass amount is greater than 0 ensure that it is greater than or equal to the amount being transferred
-        if *bypass_amount  > Uint256::zero() {
-            if funds > *bypass_amount {
-                return Err(ContractError::InsufficientBypassAllowance);
+    {
+        let sender = sender.to_string();
+        // serves two purposes:
+        //  1) when Some, indicates an address was eligible for bypass
+        //  2) Some(T) is the index of the bypass queue entry to remove 
+        let mut remove_idx: Option<usize> = None;
+            for (idx, s) in bypass_queue.iter_mut().enumerate() {
+                if s.0.eq(&sender) {
+                    if s.1.lt(&funds) {
+                        return Err(ContractError::InsufficientBypassAllowance);
+                    }
+                    remove_idx = Some(idx);
+                    break;
+                }
             }
-            // address allowed to bypass, so remove the existing bypass entry before returning
-            bypass_queue.remove(&sender.to_string());
+        if let Some(idx) = remove_idx {
+            bypass_queue.remove(idx);
             TEMPORARY_RATE_LIMIT_BYPASS.save(deps.storage, path.into(), &bypass_queue)?;
             return Ok(Response::new()
             .add_attribute("method", "try_transfer")
@@ -91,7 +100,6 @@ pub fn try_transfer(
             .add_attribute("bypass", "ok"));
         }
     }
-
     // If any of the RateLimits fails, allow_transfer() will return
     // ContractError::RateLimitExceded, which we'll propagate out
     let results: Vec<RateLimit> = trackers
@@ -206,6 +214,7 @@ pub fn undo_send(deps: DepsMut, packet: Packet) -> Result<Response, ContractErro
     Ok(Response::new()
         .add_attribute("method", "undo_send")
         .add_attribute("channel_id", path.channel.to_string())
-        .add_attribute("denom", path.denom.to_string())
+        .add_attribute("deno
+        pub struct BypassQueue {m", path.denom.to_string())
         .add_attribute("any_channel", (!any_trackers.is_empty()).to_string()))
 }

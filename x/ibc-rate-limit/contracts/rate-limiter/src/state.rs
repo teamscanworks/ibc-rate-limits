@@ -336,13 +336,7 @@ pub const RATE_LIMIT_TRACKERS: Map<(String, String), Vec<RateLimit>> = Map::new(
 /// Indicates accounts that can bypass a rate limit for a specific IBC Channel + denom, and the amount that can be sent
 /// 
 /// maps (ibc_channel, denom) => sender => amount 
-pub const TEMPORARY_RATE_LIMIT_BYPASS: Map<(String, String), HashMap<String, Uint256>> = Map::new("bypass");
-
-/// BypassQueue is a workaround for the `Map` storage type not support
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
-pub struct BypassQueue {
-    pub entries: HashMap<String, Uint256>
-}
+pub const TEMPORARY_RATE_LIMIT_BYPASS: Map<(String, String), Vec<(String, Uint256)>> = Map::new("bypass");
 
 
 #[cfg(test)]

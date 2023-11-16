@@ -114,14 +114,29 @@ pub fn try_reset_path_quota(
 /// 
 /// to "remove" an address from the bypass queue you can set `amount == 0`
 pub fn bypass_update(deps: DepsMut, sender: Addr, channel_id: String, denom: String, amount: Uint256) -> Result<Response, ContractError> {
+    let sender = sender.to_string();
     let path = &Path::new(channel_id, denom);
     let mut bypass_queue = TEMPORARY_RATE_LIMIT_BYPASS.may_load(deps.storage, path.into())?.unwrap_or_default();
-
-    bypass_queue.insert(sender.to_string(), amount);
+    let mut found = false;
+    for s in bypass_queue.iter_mut() {
+        if s.0.eq(&sender) {
+            s.1 = amount;
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        bypass_queue.push((sender.clone(), amount));
+    }
 
     TEMPORARY_RATE_LIMIT_BYPASS.save(deps.storage, path.into(), &bypass_queue)?;
 
-    Ok(Response::new())
+    Ok(Response::new()
+        .add_attribute("sender_bypass", sender.to_string())
+        .add_attribute("amount",amount)
+        .add_attribute("channel_id", path.channel.clone())
+        .add_attribute("denom", path.denom.clone())
+    )
 }
 
 #[cfg(test)]
