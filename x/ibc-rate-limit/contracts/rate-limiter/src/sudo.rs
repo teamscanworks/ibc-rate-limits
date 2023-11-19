@@ -63,7 +63,6 @@ pub fn try_transfer(
     let mut trackers = RATE_LIMIT_TRACKERS
         .may_load(deps.storage, path.into())?
         .unwrap_or_default();
-    let mut bypass_queue = TEMPORARY_RATE_LIMIT_BYPASS.may_load(deps.storage, path.into())?.unwrap_or_default();
 
     let not_configured = trackers.is_empty() && any_trackers.is_empty();
 
@@ -87,6 +86,8 @@ pub fn try_transfer(
         }
     }
     {
+        let mut bypass_queue = TEMPORARY_RATE_LIMIT_BYPASS.may_load(deps.storage, path.into())?.unwrap_or_default();
+
         let sender = sender.to_string();
         // serves two purposes:
         //  1) when Some, indicates an address was eligible for bypass
