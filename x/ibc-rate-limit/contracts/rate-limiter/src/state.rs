@@ -338,6 +338,9 @@ pub const RATE_LIMIT_TRACKERS: Map<(String, String), Vec<RateLimit>> = Map::new(
 /// maps (ibc_channel, denom) => sender => amount 
 pub const TEMPORARY_RATE_LIMIT_BYPASS: Map<(String, String), Vec<(String, Uint256)>> = Map::new("bypass");
 
+/// Intent Queue allows for users to submit intents to transfer an amount bypassing the rate limit tracker evaluation after a delayed period of time
+pub const INTENT_QUEUE: Map<(String, String, String), (Uint256, Timestamp)> = Map::new("intent");
+
 
 #[cfg(test)]
 pub mod tests {

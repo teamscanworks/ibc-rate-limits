@@ -1,7 +1,10 @@
 use crate::msg::{PathMsg, QuotaMsg};
-use crate::state::{Flow, Path, RateLimit, GOVMODULE, IBCMODULE, RATE_LIMIT_TRACKERS, TEMPORARY_RATE_LIMIT_BYPASS};
+use crate::state::{
+    Flow, Path, RateLimit, GOVMODULE, IBCMODULE, INTENT_QUEUE, RATE_LIMIT_TRACKERS,
+    TEMPORARY_RATE_LIMIT_BYPASS,
+};
 use crate::ContractError;
-use cosmwasm_std::{Addr, DepsMut, Response, Timestamp, Uint256};
+use cosmwasm_std::{Addr, DepsMut, Env, Response, Timestamp, Uint256};
 
 pub fn add_new_paths(
     deps: DepsMut,
@@ -108,15 +111,23 @@ pub fn try_reset_path_quota(
         .add_attribute("channel_id", channel_id))
 }
 
-
 /// updates the bypass queue to allow the sender to send up to amount in a single transaction without
 /// triggering rate limit evaluation
-/// 
+///
 /// to "remove" an address from the bypass queue you can set `amount == 0`
-pub fn bypass_update(deps: DepsMut, sender: Addr, channel_id: String, denom: String, amount: Uint256) -> Result<Response, ContractError> {
+pub fn bypass_update(
+    deps: DepsMut,
+    sender: Addr,
+    channel_id: String,
+    denom: String,
+    amount: Uint256,
+) -> Result<Response, ContractError> {
     let sender = sender.to_string();
     let path = &Path::new(channel_id, denom);
-    let mut bypass_queue = TEMPORARY_RATE_LIMIT_BYPASS.may_load(deps.storage, path.into())?.unwrap_or_default();
+    let mut bypass_queue = TEMPORARY_RATE_LIMIT_BYPASS
+        .may_load(deps.storage, path.into())?
+        .unwrap_or_default();
+    // stores whether or not the sender address is currently present in the bypass queue and was overriden
     let mut found = false;
     for s in bypass_queue.iter_mut() {
         if s.0.eq(&sender) {
@@ -125,6 +136,7 @@ pub fn bypass_update(deps: DepsMut, sender: Addr, channel_id: String, denom: Str
             break;
         }
     }
+    // address not found so update the bypass queue with a new entry
     if !found {
         bypass_queue.push((sender.clone(), amount));
     }
@@ -133,10 +145,77 @@ pub fn bypass_update(deps: DepsMut, sender: Addr, channel_id: String, denom: Str
 
     Ok(Response::new()
         .add_attribute("sender_bypass", sender.to_string())
-        .add_attribute("amount",amount)
+        .add_attribute("amount", amount)
+        .add_attribute("channel_id", path.channel.clone())
+        .add_attribute("denom", path.denom.clone()))
+}
+
+pub fn submit_intent(
+    deps: DepsMut,
+    env: Env,
+    sender: Addr,
+    channel_id: String,
+    denom: String,
+    amount: Uint256,
+) -> Result<Response, ContractError> {
+    // unlock time is the current block time plus 24 hours (86400 seconds)
+    let unlock_time = env.block.time.plus_seconds(86400);
+
+    let path = &Path::new(channel_id, denom);
+
+    if INTENT_QUEUE.has(
+        deps.storage,
+        (sender.to_string(), path.channel.clone(), path.denom.clone()),
+    ) {
+        return Err(ContractError::IntentAlreadyPresent);
+    }
+    let mut intent = INTENT_QUEUE
+        .may_load(
+            deps.storage,
+            (sender.to_string(), path.channel.clone(), path.denom.clone()),
+        )?
+        .unwrap_or_default();
+
+    intent.0 = amount;
+    intent.1 = unlock_time;
+
+    INTENT_QUEUE.save(
+        deps.storage,
+        (sender.to_string(), path.channel.clone(), path.denom.clone()),
+        &intent,
+    )?;
+
+    Ok(Response::new()
+        .add_attribute("submit_intent", sender.to_string())
+        .add_attribute("amount", amount)
         .add_attribute("channel_id", path.channel.clone())
         .add_attribute("denom", path.denom.clone())
-    )
+        .add_attribute("action", "add"))
+}
+
+/// removes an intent from the intent queue
+pub fn remove_intent(
+    deps: DepsMut,
+    sender: Addr,
+    channel_id: String,
+    denom: String,
+) -> Result<Response, ContractError> {
+    let path = &Path::new(channel_id, denom);
+
+    if INTENT_QUEUE.has(
+        deps.storage,
+        (sender.to_string(), path.channel.clone(), path.denom.clone()),
+    ) {
+        INTENT_QUEUE.remove(
+            deps.storage,
+            (sender.to_string(), path.channel.clone(), path.denom.clone()),
+        );
+    }
+    Ok(Response::new()
+        .add_attribute("submit_intent", sender.to_string())
+        .add_attribute("channel_id", path.channel.clone())
+        .add_attribute("denom", path.denom.clone())
+        .add_attribute("action", "remove"))
 }
 
 #[cfg(test)]

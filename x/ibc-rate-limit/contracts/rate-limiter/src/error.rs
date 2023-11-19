@@ -28,4 +28,6 @@ pub enum ContractError {
     },
     #[error("more tokens than allowed attempted to be transferred")]
     InsufficientBypassAllowance,
+    #[error("only one intent per (sender, channel_id, denom) may be present")]
+    IntentAlreadyPresent,
 }
