@@ -30,4 +30,6 @@ pub enum ContractError {
     InsufficientBypassAllowance,
     #[error("only one intent per (sender, channel_id, denom) may be present")]
     IntentAlreadyPresent,
+    #[error("no intent matching (sender, channel_id, denom) is present")]
+    IntentNotPresent,
 }
