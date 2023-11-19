@@ -3,7 +3,7 @@ use cosmwasm_std::{DepsMut, Response, Timestamp, Uint256, Addr, Env};
 use crate::{
     packet::{Packet, FungibleTokenData},
     state::{FlowType, Path, RateLimit, RATE_LIMIT_TRACKERS, TEMPORARY_RATE_LIMIT_BYPASS, INTENT_QUEUE},
-    ContractError,
+    ContractError, execute::intent_ok,
 };
 
 // This function will process a packet and extract the paths information, funds,
@@ -75,7 +75,7 @@ pub fn try_transfer(
             .add_attribute("quota", "none"));
     }
     if let Ok(intent) = INTENT_QUEUE.load(deps.storage, (sender.to_string(), path.channel.clone(), path.denom.clone())) {
-        if now >= intent.1 && funds.eq(&intent.0) {
+        if intent_ok(intent, now, funds) {
             INTENT_QUEUE.remove(deps.storage, (sender.to_string(), path.channel.clone(), path.denom.clone()));
             return Ok(Response::new()
                     .add_attribute("method", "try_transfer")

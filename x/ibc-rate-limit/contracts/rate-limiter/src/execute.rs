@@ -190,7 +190,7 @@ pub fn submit_intent(
         .add_attribute("amount", amount)
         .add_attribute("channel_id", path.channel.clone())
         .add_attribute("denom", path.denom.clone())
-        .add_attribute("action", "add"))
+        .add_attribute("intent_action", "submit"))
 }
 
 /// removes an intent from the intent queue
@@ -210,20 +210,28 @@ pub fn remove_intent(
             deps.storage,
             (sender.to_string(), path.channel.clone(), path.denom.clone()),
         );
+    } else {
+        return Err(ContractError::IntentNotPresent);
     }
     Ok(Response::new()
-        .add_attribute("submit_intent", sender.to_string())
+        .add_attribute("remove_intent", sender.to_string())
         .add_attribute("channel_id", path.channel.clone())
         .add_attribute("denom", path.denom.clone())
-        .add_attribute("action", "remove"))
+        .add_attribute("intent_action", "remove"))
+}
+
+/// returns whether or not the intent is ok to be consumed
+pub fn intent_ok(intent: (Uint256, Timestamp), block_time: Timestamp, funds: Uint256) -> bool {
+    block_time >= intent.1 && funds.eq(&intent.0)
 }
 
 #[cfg(test)]
 mod tests {
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-    use cosmwasm_std::{from_binary, Addr, StdError};
+    use cosmwasm_std::{from_binary, Addr, StdError, Timestamp, Uint256};
 
     use crate::contract::{execute, query};
+    use crate::execute::intent_ok;
     use crate::helpers::tests::verify_query_response;
     use crate::msg::{ExecuteMsg, QueryMsg, QuotaMsg};
     use crate::state::{RateLimit, GOVMODULE, IBCMODULE};
@@ -355,5 +363,24 @@ mod tests {
             0_u32.into(),
             env.block.time.plus_seconds(5000),
         );
+    }
+    #[test]
+    fn test_intent_ok() {
+        let now = Timestamp::from_seconds(1700383122);
+        let unlock = now.plus_seconds(86400);
+        let then = now.plus_seconds(200);
+        let amount = Uint256::from_u128(1_000_000);
+
+        // ensure that timestamp fails
+        assert!(!intent_ok((amount, unlock), then, amount));
+        
+        let then = now.plus_seconds(86400);
+
+        // ensure amount fails
+        assert!(!intent_ok((amount, now), then, Uint256::from_u128(1)));
+
+        // amount and timestamp ok so should return true
+        assert!(intent_ok((amount, now), then, amount))
+
     }
 }
