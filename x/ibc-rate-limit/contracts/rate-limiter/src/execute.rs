@@ -117,11 +117,17 @@ pub fn try_reset_path_quota(
 /// to "remove" an address from the bypass queue you can set `amount == 0`
 pub fn bypass_update(
     deps: DepsMut,
+    msg_invoker: Addr,
     sender: Addr,
     channel_id: String,
     denom: String,
     amount: Uint256,
 ) -> Result<Response, ContractError> {
+    let ibc_module = IBCMODULE.load(deps.storage)?;
+    let gov_module = GOVMODULE.load(deps.storage)?;
+    if msg_invoker != ibc_module && msg_invoker != gov_module {
+        return Err(ContractError::Unauthorized {});
+    }
     let sender = sender.to_string();
     let path = &Path::new(channel_id, denom);
     let mut bypass_queue = TEMPORARY_RATE_LIMIT_BYPASS
@@ -153,11 +159,18 @@ pub fn bypass_update(
 pub fn submit_intent(
     deps: DepsMut,
     env: Env,
+    msg_invoker: Addr,
     sender: Addr,
     channel_id: String,
     denom: String,
     amount: Uint256,
 ) -> Result<Response, ContractError> {
+    let ibc_module = IBCMODULE.load(deps.storage)?;
+    let gov_module = GOVMODULE.load(deps.storage)?;
+    if msg_invoker != ibc_module && msg_invoker != gov_module {
+        return Err(ContractError::Unauthorized {});
+    }
+
     // unlock time is the current block time plus 24 hours (86400 seconds)
     let unlock_time = env.block.time.plus_seconds(86400);
 
@@ -196,10 +209,17 @@ pub fn submit_intent(
 /// removes an intent from the intent queue
 pub fn remove_intent(
     deps: DepsMut,
+    msg_invoker: Addr,
     sender: Addr,
     channel_id: String,
     denom: String,
 ) -> Result<Response, ContractError> {
+    let ibc_module = IBCMODULE.load(deps.storage)?;
+    let gov_module = GOVMODULE.load(deps.storage)?;
+    if msg_invoker != ibc_module && msg_invoker != gov_module {
+        return Err(ContractError::Unauthorized {});
+    }
+    
     let path = &Path::new(channel_id, denom);
 
     if INTENT_QUEUE.has(

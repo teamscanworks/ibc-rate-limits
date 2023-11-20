@@ -61,6 +61,7 @@ pub fn execute(
         ),
         ExecuteMsg::BypassUpdate { sender, channel_id, denom, amount } => execute::bypass_update(
             deps,
+            info.sender,
             sender,
             channel_id,
             denom,
@@ -71,12 +72,12 @@ pub fn execute(
             channel_id,
             denom,
             amount
-        } => execute::submit_intent(deps, env, sender, channel_id, denom, amount),
+        } => execute::submit_intent(deps, env, info.sender, sender, channel_id, denom, amount),
         ExecuteMsg::RemoveIntent {
             sender,
             channel_id,
             denom
-        } => execute::remove_intent(deps,  sender, channel_id, denom)
+        } => execute::remove_intent(deps,  info.sender, sender, channel_id, denom)
     }
 }
 

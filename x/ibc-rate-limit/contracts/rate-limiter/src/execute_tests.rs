@@ -49,7 +49,7 @@ fn test_bypass_update() {
     let channel_id =format!("channel");
     let denom = format!("denom");
     let sender = Addr::unchecked("SENDER_ADDR");
-    let res = bypass_update(deps.as_mut(), sender.clone(), channel_id.clone(), denom.clone(), Uint256::from_u128(100)).unwrap();
+    let res = bypass_update(deps.as_mut(), Addr::unchecked(GOV_ADDR), sender.clone(), channel_id.clone(), denom.clone(), Uint256::from_u128(100)).unwrap();
     assert_eq!(res.attributes[0].key, "sender_bypass");
     assert_eq!(res.attributes[0].value, sender.to_string());
 
@@ -76,7 +76,7 @@ fn test_bypass_update_to_zero() {
     let channel_id =format!("channel");
     let denom = format!("denom");
     let sender = Addr::unchecked("SENDER_ADDR");
-    let res = bypass_update(deps.as_mut(), sender.clone(), channel_id.clone(), denom.clone(), Uint256::from_u128(100)).unwrap();
+    let res = bypass_update(deps.as_mut(), Addr::unchecked(GOV_ADDR), sender.clone(), channel_id.clone(), denom.clone(), Uint256::from_u128(100)).unwrap();
     assert_eq!(res.attributes[0].key, "sender_bypass");
     assert_eq!(res.attributes[0].value, sender.to_string());
 
@@ -85,7 +85,7 @@ fn test_bypass_update_to_zero() {
     assert_eq!(bypass_queue[0].0, sender.to_string());
     assert_eq!(bypass_queue[0].1, Uint256::from_u128(100));
 
-    let res = bypass_update(deps.as_mut(), sender.clone(), channel_id.clone(), denom.clone(), Uint256::zero()).unwrap();
+    let res = bypass_update(deps.as_mut(), Addr::unchecked(GOV_ADDR), sender.clone(), channel_id.clone(), denom.clone(), Uint256::zero()).unwrap();
     assert_eq!(res.attributes[0].key, "sender_bypass");
     assert_eq!(res.attributes[0].value, sender.to_string());
 
@@ -121,6 +121,7 @@ fn test_submit_intent() {
     let res = submit_intent(
         deps.as_mut(),
         env.clone(),
+        Addr::unchecked(GOV_ADDR),
         sender.clone(),
         channel_id,
         denom,
@@ -149,9 +150,9 @@ fn test_submit_intent() {
 
     assert!(intent_ok(intent, env.block.time, Uint256::from_u128(1_000_000)));
 
-    assert!(submit_intent(deps.as_mut(), env.clone(), sender.clone(), "channel_id".to_string(), "denom".to_string(), Uint256::from_u128(1_000_000)).is_err());
+    assert!(submit_intent(deps.as_mut(), env.clone(),Addr::unchecked(GOV_ADDR), sender.clone(), "channel_id".to_string(), "denom".to_string(), Uint256::from_u128(1_000_000)).is_err());
 
-    let intent = remove_intent(deps.as_mut(),  sender.clone(), "channel_id".to_string(), "denom".to_string()).unwrap();
+    let intent = remove_intent(deps.as_mut(),  Addr::unchecked(GOV_ADDR), sender.clone(), "channel_id".to_string(), "denom".to_string()).unwrap();
 
     assert_eq!(intent.attributes[0].key, "remove_intent");
     assert_eq!(intent.attributes[0].value, sender.to_string());
@@ -162,7 +163,7 @@ fn test_submit_intent() {
     assert_eq!(intent.attributes[3].key, "intent_action");
     assert_eq!(intent.attributes[3].value, "remove");
 
-    assert!(remove_intent(deps.as_mut(),  sender.clone(), "channel_id".to_string(), "denom".to_string()).is_err());
+    assert!(remove_intent(deps.as_mut(),  Addr::unchecked(GOV_ADDR), sender.clone(), "channel_id".to_string(), "denom".to_string()).is_err());
 
     assert!(INTENT_QUEUE.load(&deps.storage, (sender.to_string(), "channel_id".to_string(), "denom".to_string())).is_err());
 }
