@@ -59,6 +59,25 @@ pub fn execute(
             quota_id,
             env.block.time,
         ),
+        ExecuteMsg::BypassUpdate { sender, channel_id, denom, amount } => execute::bypass_update(
+            deps,
+            info.sender,
+            sender,
+            channel_id,
+            denom,
+            amount
+        ),
+        ExecuteMsg::SubmitIntent {
+            sender,
+            channel_id,
+            denom,
+            amount
+        } => execute::submit_intent(deps, env, info.sender, sender, channel_id, denom, amount),
+        ExecuteMsg::RemoveIntent {
+            sender,
+            channel_id,
+            denom
+        } => execute::remove_intent(deps,  info.sender, sender, channel_id, denom)
     }
 }
 

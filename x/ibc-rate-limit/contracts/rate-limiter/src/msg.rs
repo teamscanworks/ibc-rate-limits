@@ -75,6 +75,26 @@ pub enum ExecuteMsg {
         denom: String,
         quota_id: String,
     },
+    BypassUpdate {
+        sender: Addr,
+        channel_id: String,
+        denom: String,
+        amount: cosmwasm_std::Uint256
+    },
+    /// used to submit an intent to transfer a large amount of funds that bypasses the rate limit tracker
+    /// submitted intents are delayed for 24 hours allowing governance actions to rever the intent
+    SubmitIntent {
+        sender: Addr,
+        channel_id: String,
+        denom: String,
+        amount: cosmwasm_std::Uint256
+    },
+    /// removes a previously submitted intent preventing it from being used
+    RemoveIntent {
+        sender: Addr,
+        channel_id: String,
+        denom: String,
+    }
 }
 
 #[cw_serde]

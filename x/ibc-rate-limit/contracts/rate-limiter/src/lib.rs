@@ -8,6 +8,8 @@ mod state;
 
 pub mod packet;
 
+pub mod utils;
+
 // Functions
 mod execute;
 mod query;
@@ -17,5 +19,6 @@ mod sudo;
 mod contract_tests;
 mod helpers;
 mod integration_tests;
+mod execute_tests;
 
 pub use crate::error::ContractError;

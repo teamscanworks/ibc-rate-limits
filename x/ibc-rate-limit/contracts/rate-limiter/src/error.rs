@@ -26,4 +26,12 @@ pub enum ContractError {
         channel_id: String,
         denom: String,
     },
+    #[error("more tokens than allowed attempted to be transferred")]
+    InsufficientBypassAllowance,
+    #[error("only one intent per (sender, channel_id, denom) may be present")]
+    IntentAlreadyPresent,
+    #[error("no intent matching (sender, channel_id, denom) is present")]
+    IntentNotPresent,
+    #[error("the amount of is less than the threshold of {0}")]
+    InsufficientBypassAmount(u8),
 }

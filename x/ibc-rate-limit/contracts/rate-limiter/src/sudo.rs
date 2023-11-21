@@ -1,9 +1,9 @@
-use cosmwasm_std::{DepsMut, Response, Timestamp, Uint256};
+use cosmwasm_std::{DepsMut, Response, Timestamp, Uint256, Addr, Env};
 
 use crate::{
-    packet::Packet,
-    state::{FlowType, Path, RateLimit, RATE_LIMIT_TRACKERS},
-    ContractError,
+    packet::{Packet, FungibleTokenData},
+    state::{FlowType, Path, RateLimit, RATE_LIMIT_TRACKERS, TEMPORARY_RATE_LIMIT_BYPASS, INTENT_QUEUE},
+    ContractError, execute::intent_ok,
 };
 
 // This function will process a packet and extract the paths information, funds,
@@ -34,7 +34,7 @@ pub fn process_packet(
     #[cfg(not(test))]
     let channel_value = packet.channel_value(deps.as_ref(), &direction)?;
 
-    try_transfer(deps, path, channel_value, funds, direction, now)
+    try_transfer(deps, path, channel_value, funds, direction, now, packet.sender())
 }
 
 /// This function checks the rate limit and, if successful, stores the updated data about the value
@@ -50,6 +50,7 @@ pub fn try_transfer(
     funds: Uint256,
     direction: FlowType,
     now: Timestamp,
+    sender: Addr
 ) -> Result<Response, ContractError> {
     // Sudo call. Only go modules should be allowed to access this
 
@@ -73,7 +74,44 @@ pub fn try_transfer(
             .add_attribute("denom", path.denom.to_string())
             .add_attribute("quota", "none"));
     }
+    if let Ok(intent) = INTENT_QUEUE.load(deps.storage, (sender.to_string(), path.channel.clone(), path.denom.clone())) {
+        if intent_ok(intent, now, funds) {
+            INTENT_QUEUE.remove(deps.storage, (sender.to_string(), path.channel.clone(), path.denom.clone()));
+            return Ok(Response::new()
+                    .add_attribute("method", "try_transfer")
+                    .add_attribute("channel_id", path.channel.clone())
+                    .add_attribute("denom", path.denom.clone())
+                    .add_attribute("quota", "intent")
+            );
+        }
+    }
+    {
+        let mut bypass_queue = TEMPORARY_RATE_LIMIT_BYPASS.may_load(deps.storage, path.into())?.unwrap_or_default();
 
+        let sender = sender.to_string();
+        // serves two purposes:
+        //  1) when Some, indicates an address was eligible for bypass
+        //  2) Some(T) is the index of the bypass queue entry to remove 
+        let mut remove_idx: Option<usize> = None;
+            for (idx, s) in bypass_queue.iter_mut().enumerate() {
+                if s.0.eq(&sender) {
+                    if s.1.lt(&funds) {
+                        return Err(ContractError::InsufficientBypassAllowance);
+                    }
+                    remove_idx = Some(idx);
+                    break;
+                }
+            }
+        if let Some(idx) = remove_idx {
+            bypass_queue.remove(idx);
+            TEMPORARY_RATE_LIMIT_BYPASS.save(deps.storage, path.into(), &bypass_queue)?;
+            return Ok(Response::new()
+            .add_attribute("method", "try_transfer")
+            .add_attribute("channel_id", path.channel.to_string())
+            .add_attribute("denom", path.denom.to_string())
+            .add_attribute("bypass", "ok"));
+        }
+    }
     // If any of the RateLimits fails, allow_transfer() will return
     // ContractError::RateLimitExceded, which we'll propagate out
     let results: Vec<RateLimit> = trackers
@@ -188,6 +226,7 @@ pub fn undo_send(deps: DepsMut, packet: Packet) -> Result<Response, ContractErro
     Ok(Response::new()
         .add_attribute("method", "undo_send")
         .add_attribute("channel_id", path.channel.to_string())
-        .add_attribute("denom", path.denom.to_string())
+        .add_attribute("deno
+        pub struct BypassQueue {m", path.denom.to_string())
         .add_attribute("any_channel", (!any_trackers.is_empty()).to_string()))
 }

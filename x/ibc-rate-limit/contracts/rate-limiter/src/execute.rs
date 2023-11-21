@@ -1,7 +1,11 @@
 use crate::msg::{PathMsg, QuotaMsg};
-use crate::state::{Flow, Path, RateLimit, GOVMODULE, IBCMODULE, RATE_LIMIT_TRACKERS};
+use crate::state::{
+    Flow, Path, RateLimit, GOVMODULE, IBCMODULE, INTENT_QUEUE, RATE_LIMIT_TRACKERS,
+    TEMPORARY_RATE_LIMIT_BYPASS,
+};
 use crate::ContractError;
-use cosmwasm_std::{Addr, DepsMut, Response, Timestamp};
+use crate::utils::{parse_first_daily_quota_channel_value, percentage_of_channel_value};
+use cosmwasm_std::{Addr, DepsMut, Env, Response, Timestamp, Uint256};
 
 pub fn add_new_paths(
     deps: DepsMut,
@@ -108,12 +112,166 @@ pub fn try_reset_path_quota(
         .add_attribute("channel_id", channel_id))
 }
 
+/// updates the bypass queue to allow the sender to send up to amount in a single transaction without
+/// triggering rate limit evaluation
+///
+/// to "remove" an address from the bypass queue you can set `amount == 0`
+pub fn bypass_update(
+    deps: DepsMut,
+    msg_invoker: Addr,
+    sender: Addr,
+    channel_id: String,
+    denom: String,
+    amount: Uint256,
+) -> Result<Response, ContractError> {
+    let ibc_module = IBCMODULE.load(deps.storage)?;
+    let gov_module = GOVMODULE.load(deps.storage)?;
+    if msg_invoker != ibc_module && msg_invoker != gov_module {
+        return Err(ContractError::Unauthorized {});
+    }
+    let sender = sender.to_string();
+    let path = &Path::new(channel_id, denom);
+    let mut bypass_queue = TEMPORARY_RATE_LIMIT_BYPASS
+        .may_load(deps.storage, path.into())?
+        .unwrap_or_default();
+    // stores whether or not the sender address is currently present in the bypass queue and was overriden
+    let mut found = false;
+    for s in bypass_queue.iter_mut() {
+        if s.0.eq(&sender) {
+            s.1 = amount;
+            found = true;
+            break;
+        }
+    }
+    // address not found so update the bypass queue with a new entry
+    if !found {
+        bypass_queue.push((sender.clone(), amount));
+    }
+
+    TEMPORARY_RATE_LIMIT_BYPASS.save(deps.storage, path.into(), &bypass_queue)?;
+
+    Ok(Response::new()
+        .add_attribute("sender_bypass", sender.to_string())
+        .add_attribute("amount", amount)
+        .add_attribute("channel_id", path.channel.clone())
+        .add_attribute("denom", path.denom.clone()))
+}
+
+pub fn submit_intent(
+    deps: DepsMut,
+    env: Env,
+    msg_invoker: Addr,
+    sender: Addr,
+    channel_id: String,
+    denom: String,
+    amount: Uint256,
+) -> Result<Response, ContractError> {
+    let ibc_module = IBCMODULE.load(deps.storage)?;
+    let gov_module = GOVMODULE.load(deps.storage)?;
+    if msg_invoker != ibc_module && msg_invoker != gov_module {
+        return Err(ContractError::Unauthorized {});
+    }
+    let path = &Path::new(channel_id, denom);
+
+    let mut threshold: Option<Uint256> = None;
+    // minimum threshold of the channel value that can be used in a bypass
+    const MIN_THRESHOLD: u8 = 25;
+    // when submitting an intent  require that its  MIN_THRESHOLD or greater than the rate limits
+    // channel_value for the daily tracker
+    //
+    // if no daily tracker is present  then threshold evaluation does not occur
+    if amount > Uint256::zero() {
+        if let Ok(Some(trackers)) = RATE_LIMIT_TRACKERS.may_load(deps.storage, path.into()) {
+            if let Some(channel_value) = parse_first_daily_quota_channel_value(&trackers[..], env.block.time) {
+                threshold = percentage_of_channel_value(channel_value, MIN_THRESHOLD);
+            }
+        }
+    }
+    if let Some(threshold) = threshold {
+        if amount.lt(&threshold) {
+            return Err(ContractError::InsufficientBypassAmount(25));
+        }
+    }
+
+    // unlock time is the current block time plus 24 hours (86400 seconds)
+    let unlock_time = env.block.time.plus_seconds(86400);
+
+    if INTENT_QUEUE.has(
+        deps.storage,
+        (sender.to_string(), path.channel.clone(), path.denom.clone()),
+    ) {
+        return Err(ContractError::IntentAlreadyPresent);
+    }
+    let mut intent = INTENT_QUEUE
+        .may_load(
+            deps.storage,
+            (sender.to_string(), path.channel.clone(), path.denom.clone()),
+        )?
+        .unwrap_or_default();
+
+    intent.0 = amount;
+    intent.1 = unlock_time;
+
+    INTENT_QUEUE.save(
+        deps.storage,
+        (sender.to_string(), path.channel.clone(), path.denom.clone()),
+        &intent,
+    )?;
+
+    Ok(Response::new()
+        .add_attribute("submit_intent", sender.to_string())
+        .add_attribute("amount", amount)
+        .add_attribute("channel_id", path.channel.clone())
+        .add_attribute("denom", path.denom.clone())
+        .add_attribute("intent_action", "submit"))
+}
+
+/// removes an intent from the intent queue
+pub fn remove_intent(
+    deps: DepsMut,
+    msg_invoker: Addr,
+    sender: Addr,
+    channel_id: String,
+    denom: String,
+) -> Result<Response, ContractError> {
+    let ibc_module = IBCMODULE.load(deps.storage)?;
+    let gov_module = GOVMODULE.load(deps.storage)?;
+    if msg_invoker != ibc_module && msg_invoker != gov_module {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    let path = &Path::new(channel_id, denom);
+
+    if INTENT_QUEUE.has(
+        deps.storage,
+        (sender.to_string(), path.channel.clone(), path.denom.clone()),
+    ) {
+        INTENT_QUEUE.remove(
+            deps.storage,
+            (sender.to_string(), path.channel.clone(), path.denom.clone()),
+        );
+    } else {
+        return Err(ContractError::IntentNotPresent);
+    }
+    Ok(Response::new()
+        .add_attribute("remove_intent", sender.to_string())
+        .add_attribute("channel_id", path.channel.clone())
+        .add_attribute("denom", path.denom.clone())
+        .add_attribute("intent_action", "remove"))
+}
+
+/// returns whether or not the intent is ok to be consumed
+pub fn intent_ok(intent: (Uint256, Timestamp), block_time: Timestamp, funds: Uint256) -> bool {
+    block_time >= intent.1 && funds.eq(&intent.0)
+}
+
 #[cfg(test)]
 mod tests {
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-    use cosmwasm_std::{from_binary, Addr, StdError};
+    use cosmwasm_std::{from_binary, Addr, StdError, Timestamp, Uint256};
 
     use crate::contract::{execute, query};
+    use crate::execute::intent_ok;
     use crate::helpers::tests::verify_query_response;
     use crate::msg::{ExecuteMsg, QueryMsg, QuotaMsg};
     use crate::state::{RateLimit, GOVMODULE, IBCMODULE};
@@ -245,5 +403,24 @@ mod tests {
             0_u32.into(),
             env.block.time.plus_seconds(5000),
         );
+    }
+    #[test]
+    fn test_intent_ok() {
+        let now = Timestamp::from_seconds(1700383122);
+        let unlock = now.plus_seconds(86400);
+        let then = now.plus_seconds(200);
+        let amount = Uint256::from_u128(1_000_000);
+
+        // ensure that timestamp fails
+        assert!(!intent_ok((amount, unlock), then, amount));
+        
+        let then = now.plus_seconds(86400);
+
+        // ensure amount fails
+        assert!(!intent_ok((amount, now), then, Uint256::from_u128(1)));
+
+        // amount and timestamp ok so should return true
+        assert!(intent_ok((amount, now), then, amount))
+
     }
 }
