@@ -176,7 +176,7 @@ pub fn submit_intent(
     let mut threshold: Option<Uint256> = None;
     // minimum threshold of the channel value that can be used in a bypass
     const MIN_THRESHOLD: u8 = 25;
-    // when setting a bypass entry to a non zero value check to see if its MIN_THRESHOLD or greater than the rate limits
+    // when submitting an intent  require that its  MIN_THRESHOLD or greater than the rate limits
     // channel_value for the daily tracker
     //
     // if no daily tracker is present  then threshold evaluation does not occur

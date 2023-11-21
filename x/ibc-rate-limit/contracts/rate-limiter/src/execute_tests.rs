@@ -30,7 +30,7 @@ fn test_bypass_update_no_threshold() {
     let channel_id =format!("channel");
     let denom = format!("denom");
     let sender = Addr::unchecked("SENDER_ADDR");
-    let res = bypass_update(deps.as_mut(), mock_env().block.time, Addr::unchecked(GOV_ADDR), sender.clone(), channel_id.clone(), denom.clone(), Uint256::from_u128(100)).unwrap();
+    let res = bypass_update(deps.as_mut(), Addr::unchecked(GOV_ADDR), sender.clone(), channel_id.clone(), denom.clone(), Uint256::from_u128(100)).unwrap();
     assert_eq!(res.attributes[0].key, "sender_bypass");
     assert_eq!(res.attributes[0].value, sender.to_string());
 
@@ -122,7 +122,7 @@ fn test_bypass_update_to_zero() {
     let channel_id =format!("channel");
     let denom = format!("denom");
     let sender = Addr::unchecked("SENDER_ADDR");
-    let res = bypass_update(deps.as_mut(), mock_env().block.time, Addr::unchecked(GOV_ADDR), sender.clone(), channel_id.clone(), denom.clone(), Uint256::from_u128(100)).unwrap();
+    let res = bypass_update(deps.as_mut(),  Addr::unchecked(GOV_ADDR), sender.clone(), channel_id.clone(), denom.clone(), Uint256::from_u128(100)).unwrap();
     assert_eq!(res.attributes[0].key, "sender_bypass");
     assert_eq!(res.attributes[0].value, sender.to_string());
 
@@ -131,7 +131,7 @@ fn test_bypass_update_to_zero() {
     assert_eq!(bypass_queue[0].0, sender.to_string());
     assert_eq!(bypass_queue[0].1, Uint256::from_u128(100));
 
-    let res = bypass_update(deps.as_mut(), mock_env().block.time, Addr::unchecked(GOV_ADDR), sender.clone(), channel_id.clone(), denom.clone(), Uint256::zero()).unwrap();
+    let res = bypass_update(deps.as_mut(), Addr::unchecked(GOV_ADDR), sender.clone(), channel_id.clone(), denom.clone(), Uint256::zero()).unwrap();
     assert_eq!(res.attributes[0].key, "sender_bypass");
     assert_eq!(res.attributes[0].value, sender.to_string());
 
