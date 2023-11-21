@@ -8,6 +8,8 @@ mod state;
 
 pub mod packet;
 
+pub mod utils;
+
 // Functions
 mod execute;
 mod query;

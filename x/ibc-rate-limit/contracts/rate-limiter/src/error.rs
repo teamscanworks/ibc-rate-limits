@@ -32,4 +32,6 @@ pub enum ContractError {
     IntentAlreadyPresent,
     #[error("no intent matching (sender, channel_id, denom) is present")]
     IntentNotPresent,
+    #[error("the amount of is less than the threshold of {0}")]
+    InsufficientBypassAmount(u8),
 }

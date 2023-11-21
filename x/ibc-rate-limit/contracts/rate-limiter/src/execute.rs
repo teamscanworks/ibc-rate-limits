@@ -4,6 +4,7 @@ use crate::state::{
     TEMPORARY_RATE_LIMIT_BYPASS,
 };
 use crate::ContractError;
+use crate::utils::{parse_first_daily_quota_channel_value, percentage_of_channel_value};
 use cosmwasm_std::{Addr, DepsMut, Env, Response, Timestamp, Uint256};
 
 pub fn add_new_paths(
@@ -170,11 +171,30 @@ pub fn submit_intent(
     if msg_invoker != ibc_module && msg_invoker != gov_module {
         return Err(ContractError::Unauthorized {});
     }
+    let path = &Path::new(channel_id, denom);
+
+    let mut threshold: Option<Uint256> = None;
+    // minimum threshold of the channel value that can be used in a bypass
+    const MIN_THRESHOLD: u8 = 25;
+    // when setting a bypass entry to a non zero value check to see if its MIN_THRESHOLD or greater than the rate limits
+    // channel_value for the daily tracker
+    //
+    // if no daily tracker is present  then threshold evaluation does not occur
+    if amount > Uint256::zero() {
+        if let Ok(Some(trackers)) = RATE_LIMIT_TRACKERS.may_load(deps.storage, path.into()) {
+            if let Some(channel_value) = parse_first_daily_quota_channel_value(&trackers[..], env.block.time) {
+                threshold = percentage_of_channel_value(channel_value, MIN_THRESHOLD);
+            }
+        }
+    }
+    if let Some(threshold) = threshold {
+        if amount.lt(&threshold) {
+            return Err(ContractError::InsufficientBypassAmount(25));
+        }
+    }
 
     // unlock time is the current block time plus 24 hours (86400 seconds)
     let unlock_time = env.block.time.plus_seconds(86400);
-
-    let path = &Path::new(channel_id, denom);
 
     if INTENT_QUEUE.has(
         deps.storage,
@@ -219,7 +239,7 @@ pub fn remove_intent(
     if msg_invoker != ibc_module && msg_invoker != gov_module {
         return Err(ContractError::Unauthorized {});
     }
-    
+
     let path = &Path::new(channel_id, denom);
 
     if INTENT_QUEUE.has(
